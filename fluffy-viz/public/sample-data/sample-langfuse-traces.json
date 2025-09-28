@@ -1,0 +1,52 @@
+{
+  "id": "trace_001",
+  "timestamp": "2024-01-15T10:30:00Z",
+  "name": "chat_conversation",
+  "user_id": "user_456",
+  "session_id": "sess_123",
+  "public": false,
+  "bookmarked": false,
+  "tags": ["chat", "question-answering"],
+  "metadata": {
+    "environment": "production",
+    "version": "1.0.0"
+  },
+  "observations": [
+    {
+      "id": "obs_001",
+      "trace_id": "trace_001",
+      "type": "SPAN",
+      "name": "user_input",
+      "start_time": "2024-01-15T10:30:00Z",
+      "end_time": "2024-01-15T10:30:00.1Z",
+      "input": "What is the capital of France?",
+      "metadata": {
+        "input_length": 28
+      },
+      "level": "DEFAULT"
+    },
+    {
+      "id": "obs_002",
+      "trace_id": "trace_001",
+      "parent_observation_id": "obs_001",
+      "type": "GENERATION",
+      "name": "llm_generation",
+      "start_time": "2024-01-15T10:30:00.1Z",
+      "end_time": "2024-01-15T10:30:02Z",
+      "input": "What is the capital of France?",
+      "output": "The capital of France is Paris.",
+      "model": "gpt-4",
+      "model_parameters": {
+        "temperature": 0.7,
+        "max_tokens": 150
+      },
+      "usage": {
+        "prompt_tokens": 8,
+        "completion_tokens": 7,
+        "total_tokens": 15
+      },
+      "calculated_total_cost": 0.00045,
+      "level": "DEFAULT"
+    }
+  ]
+}

@@ -1,12 +1,28 @@
 "use client"
 
 import Link from "next/link";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { FileUploadArea } from "@/components/file-upload";
+import { EnhancedUpload } from "@/components/enhanced-upload";
 import { Github } from "lucide-react";
+import { FormatDetectionResult, UploadResult } from "@/types";
 
 export default function Home() {
+  const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
+  const [detectionResult, setDetectionResult] = useState<FormatDetectionResult | null>(null);
+
+  const handleDataUploaded = (result: UploadResult) => {
+    setUploadResult(result);
+    console.log('Data processed:', result);
+    // TODO: Navigate to next step or show results
+  };
+
+  const handleFormatDetected = (result: FormatDetectionResult) => {
+    setDetectionResult(result);
+    console.log('Format detected:', result);
+  };
+
   return (
     <div className="min-h-screen bg-background">
       {/* Hero Section */}
@@ -28,18 +44,65 @@ export default function Home() {
               Upload your conversational data and begin the FluffyViz workflow
             </p>
           </div>
-          <FileUploadArea
-            onFileSelect={(file) => {
-              console.log('File selected:', file.name)
-              // Handle file selection - could redirect to processing page
-            }}
-            onDescriptionChange={(description) => {
-              console.log('Description:', description)
-              // Handle description changes
-            }}
+          <EnhancedUpload
+            onDataUploaded={handleDataUploaded}
+            onFormatDetected={handleFormatDetected}
           />
         </div>
       </section>
+
+      {/* Upload Results Section */}
+      {uploadResult && (
+        <section className="px-8 py-16">
+          <div className="max-w-4xl mx-auto">
+            <Card>
+              <CardHeader>
+                <CardTitle>Upload Results</CardTitle>
+                <CardDescription>
+                  Your data has been processed successfully
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-primary">{uploadResult.stats.total_rows}</div>
+                    <div className="text-sm text-muted-foreground">Total Rows</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-green-600">{uploadResult.stats.valid_rows}</div>
+                    <div className="text-sm text-muted-foreground">Valid Rows</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-red-600">{uploadResult.stats.invalid_rows}</div>
+                    <div className="text-sm text-muted-foreground">Invalid Rows</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-orange-600">{uploadResult.stats.duplicate_ids}</div>
+                    <div className="text-sm text-muted-foreground">Duplicates</div>
+                  </div>
+                </div>
+                {uploadResult.validation_errors.length > 0 && (
+                  <div className="mt-4">
+                    <h4 className="font-semibold mb-2">Validation Errors:</h4>
+                    <div className="bg-red-50 border border-red-200 rounded-lg p-3 max-h-32 overflow-y-auto">
+                      {uploadResult.validation_errors.slice(0, 5).map((error, index) => (
+                        <div key={index} className="text-sm text-red-800">
+                          Row {error.row_index}: {error.message}
+                        </div>
+                      ))}
+                      {uploadResult.validation_errors.length > 5 && (
+                        <div className="text-sm text-red-600 mt-1">
+                          ... and {uploadResult.validation_errors.length - 5} more errors
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </section>
+      )}
 
       {/* Workflow Section */}
       <section className="px-8 py-16">
