@@ -1,6 +1,9 @@
+"use client"
+
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { FileUploadArea } from "@/components/file-upload";
 
 export default function Home() {
   return (
@@ -16,15 +19,45 @@ export default function Home() {
             <Button size="lg" asChild>
               <Link href="/style-guide">View Style Guide</Link>
             </Button>
-            <Button variant="outline" size="lg">
+            <Button
+              variant="outline"
+              size="lg"
+              onClick={() => {
+                document.getElementById('upload-section')?.scrollIntoView({
+                  behavior: 'smooth'
+                })
+              }}
+            >
               Get Started
             </Button>
           </div>
         </div>
       </section>
 
+      {/* Upload Section */}
+      <section id="upload-section" className="px-8 py-16 bg-muted/30">
+        <div className="max-w-4xl mx-auto">
+          <div className="text-center mb-12">
+            <h2 className="text-4xl font-bold mb-4">Get Started with Your Data</h2>
+            <p className="text-xl text-muted-foreground">
+              Upload your conversational data and begin the FluffyViz workflow
+            </p>
+          </div>
+          <FileUploadArea
+            onFileSelect={(file) => {
+              console.log('File selected:', file.name)
+              // Handle file selection - could redirect to processing page
+            }}
+            onDescriptionChange={(description) => {
+              console.log('Description:', description)
+              // Handle description changes
+            }}
+          />
+        </div>
+      </section>
+
       {/* Workflow Section */}
-      <section className="px-8 py-16 bg-muted/30">
+      <section className="px-8 py-16">
         <div className="max-w-6xl mx-auto">
           <h2 className="text-4xl font-bold text-center mb-12">Simple 4-Step Workflow</h2>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-6">

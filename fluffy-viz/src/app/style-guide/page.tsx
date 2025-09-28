@@ -13,6 +13,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { ThemeToggle } from "@/components/theme-toggle"
+import { WorkflowBreadcrumb, CompactWorkflowBreadcrumb, VerticalWorkflowBreadcrumb } from "@/components/workflow-breadcrumb"
+import { FileUploadArea, CompactFileUpload } from "@/components/file-upload"
 import {
   BarChart3,
   Database,
@@ -23,6 +25,34 @@ import {
 
 export default function StyleGuide() {
   const [selectedRows, setSelectedRows] = useState<string[]>([])
+
+  // Workflow steps for FluffyViz
+  const workflowSteps = [
+    {
+      id: "upload",
+      title: "Upload",
+      description: "Raw conversational/agent output data",
+      status: "completed" as const
+    },
+    {
+      id: "augment",
+      title: "Augment",
+      description: "Select enrichment functions",
+      status: "completed" as const
+    },
+    {
+      id: "process",
+      title: "Process",
+      description: "Batch apply augmentations",
+      status: "current" as const
+    },
+    {
+      id: "visualize",
+      title: "Visualize",
+      description: "Export to Embedding Atlas",
+      status: "pending" as const
+    }
+  ]
 
   const sampleData = [
     {
@@ -349,38 +379,258 @@ export default function StyleGuide() {
           </Card>
         </section>
 
-        {/* Workflow Steps */}
-        <section className="space-y-6">
+        {/* Workflow Visualization */}
+        <section className="space-y-8">
           <h2 className="text-3xl font-semibold">Workflow Visualization</h2>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <Card className="border-primary border-2">
-              <CardContent className="p-6 text-center">
-                <div className="w-12 h-12 bg-primary text-primary-foreground rounded-full flex items-center justify-center mx-auto mb-4 text-xl font-bold">1</div>
-                <h3 className="font-semibold text-lg mb-2">Upload</h3>
-                <p className="text-sm text-muted-foreground">Raw conversational data</p>
-              </CardContent>
-            </Card>
+
+          {/* Traditional Workflow Cards */}
+          <div className="space-y-4">
+            <h3 className="text-xl font-medium">Workflow Cards</h3>
             <Card>
-              <CardContent className="p-6 text-center">
-                <div className="w-12 h-12 bg-muted text-foreground rounded-full flex items-center justify-center mx-auto mb-4 text-xl font-bold">2</div>
-                <h3 className="font-semibold text-lg mb-2">Augment</h3>
-                <p className="text-sm text-muted-foreground">Select enrichment functions</p>
+              <CardContent className="p-6">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                  <Card className="border-primary border-2">
+                    <CardContent className="p-6 text-center">
+                      <div className="w-12 h-12 bg-primary text-primary-foreground rounded-full flex items-center justify-center mx-auto mb-4 text-xl font-bold">1</div>
+                      <h4 className="font-semibold text-lg mb-2">Upload</h4>
+                      <p className="text-sm text-muted-foreground">Raw conversational data</p>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="p-6 text-center">
+                      <div className="w-12 h-12 bg-muted text-foreground rounded-full flex items-center justify-center mx-auto mb-4 text-xl font-bold">2</div>
+                      <h4 className="font-semibold text-lg mb-2">Augment</h4>
+                      <p className="text-sm text-muted-foreground">Select enrichment functions</p>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="p-6 text-center">
+                      <div className="w-12 h-12 bg-muted text-foreground rounded-full flex items-center justify-center mx-auto mb-4 text-xl font-bold">3</div>
+                      <h4 className="font-semibold text-lg mb-2">Process</h4>
+                      <p className="text-sm text-muted-foreground">Batch apply augmentations</p>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="p-6 text-center">
+                      <div className="w-12 h-12 bg-muted text-foreground rounded-full flex items-center justify-center mx-auto mb-4 text-xl font-bold">4</div>
+                      <h4 className="font-semibold text-lg mb-2">Visualize</h4>
+                      <p className="text-sm text-muted-foreground">Export to Embedding Atlas</p>
+                    </CardContent>
+                  </Card>
+                </div>
               </CardContent>
             </Card>
+          </div>
+
+          {/* Workflow Breadcrumbs */}
+          <div className="space-y-6">
+            <h3 className="text-xl font-medium">Breadcrumb Navigation</h3>
+
+            {/* Standard Breadcrumb */}
+            <div className="space-y-3">
+              <h4 className="text-lg font-medium">Standard Breadcrumb</h4>
+              <Card>
+                <CardContent className="p-6">
+                  <WorkflowBreadcrumb steps={workflowSteps} />
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Compact Breadcrumb */}
+            <div className="space-y-3">
+              <h4 className="text-lg font-medium">Compact Horizontal</h4>
+              <Card>
+                <CardContent className="p-6">
+                  <CompactWorkflowBreadcrumb steps={workflowSteps} />
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Vertical Breadcrumb */}
+            <div className="space-y-3">
+              <h4 className="text-lg font-medium">Vertical Breadcrumb</h4>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <Card>
+                  <CardContent className="p-6">
+                    <VerticalWorkflowBreadcrumb steps={workflowSteps} />
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-6">
+                    <h5 className="font-semibold mb-4">Usage Guidelines</h5>
+                    <div className="space-y-3 text-sm">
+                      <div>
+                        <strong>Cards:</strong> Great for landing pages and overview sections
+                      </div>
+                      <div>
+                        <strong>Standard:</strong> Use for main workflow navigation with descriptions
+                      </div>
+                      <div>
+                        <strong>Compact:</strong> Perfect for headers or limited space areas
+                      </div>
+                      <div>
+                        <strong>Vertical:</strong> Ideal for sidebars or detailed step-by-step guides
+                      </div>
+                    </div>
+                    <div className="mt-4 p-3 bg-muted rounded-lg">
+                      <p className="text-xs text-muted-foreground">
+                        All variants support three states: completed (✓), current (highlighted), and pending (muted)
+                      </p>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            </div>
+
+            {/* Interactive States Demo */}
+            <div className="space-y-3">
+              <h4 className="text-lg font-medium">Interactive States</h4>
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-lg">All Pending</CardTitle>
+                    <CardDescription>Initial state when workflow starts</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <CompactWorkflowBreadcrumb
+                      steps={workflowSteps.map(step => ({ ...step, status: "pending" }))}
+                    />
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-lg">In Progress</CardTitle>
+                    <CardDescription>Mid-workflow with current step highlighted</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <CompactWorkflowBreadcrumb steps={workflowSteps} />
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-lg">All Complete</CardTitle>
+                    <CardDescription>Finished workflow with all steps done</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <CompactWorkflowBreadcrumb
+                      steps={workflowSteps.map(step => ({ ...step, status: "completed" }))}
+                    />
+                  </CardContent>
+                </Card>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* File Upload Components */}
+        <section className="space-y-8">
+          <h2 className="text-3xl font-semibold">File Upload & Data Input</h2>
+
+          {/* Main Upload Area */}
+          <div className="space-y-4">
+            <h3 className="text-xl font-medium">Primary Upload Interface</h3>
             <Card>
-              <CardContent className="p-6 text-center">
-                <div className="w-12 h-12 bg-muted text-foreground rounded-full flex items-center justify-center mx-auto mb-4 text-xl font-bold">3</div>
-                <h3 className="font-semibold text-lg mb-2">Process</h3>
-                <p className="text-sm text-muted-foreground">Batch apply augmentations</p>
+              <CardContent className="p-6">
+                <FileUploadArea
+                  onFileSelect={(file) => console.log('File selected:', file.name)}
+                  onDescriptionChange={(desc) => console.log('Description:', desc)}
+                />
               </CardContent>
             </Card>
-            <Card>
-              <CardContent className="p-6 text-center">
-                <div className="w-12 h-12 bg-muted text-foreground rounded-full flex items-center justify-center mx-auto mb-4 text-xl font-bold">4</div>
-                <h3 className="font-semibold text-lg mb-2">Visualize</h3>
-                <p className="text-sm text-muted-foreground">Export to Embedding Atlas</p>
-              </CardContent>
-            </Card>
+          </div>
+
+          {/* Compact Upload */}
+          <div className="space-y-4">
+            <h3 className="text-xl font-medium">Compact Upload</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <Card>
+                <CardContent className="p-6">
+                  <CompactFileUpload
+                    onFileSelect={(file) => console.log('Compact file selected:', file.name)}
+                  />
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="p-6">
+                  <h4 className="font-semibold mb-4">Upload Features</h4>
+                  <div className="space-y-3 text-sm">
+                    <div>
+                      <strong>Drag & Drop:</strong> Intuitive file dropping with visual feedback
+                    </div>
+                    <div>
+                      <strong>File Types:</strong> Supports CSV, JSON, JSONL, and TXT formats
+                    </div>
+                    <div>
+                      <strong>Descriptions:</strong> Optional dataset descriptions for context
+                    </div>
+                    <div>
+                      <strong>Trending Tags:</strong> Quick-select common use cases
+                    </div>
+                  </div>
+                  <div className="mt-4 p-3 bg-muted rounded-lg">
+                    <p className="text-xs text-muted-foreground">
+                      Inspired by AI Sheets design with FluffyViz-specific messaging
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+
+          {/* Upload States */}
+          <div className="space-y-4">
+            <h3 className="text-xl font-medium">Upload States</h3>
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg">Empty State</CardTitle>
+                  <CardDescription>Initial upload area before file selection</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="border-2 border-dashed border-muted-foreground/25 rounded-lg p-4 text-center">
+                    <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center mx-auto mb-2">
+                      <Database className="h-4 w-4 text-muted-foreground" />
+                    </div>
+                    <p className="text-sm font-medium">Drop or click to import</p>
+                    <p className="text-xs text-muted-foreground">Ready for upload</p>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg">Drag Active</CardTitle>
+                  <CardDescription>Visual feedback during drag operations</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="border-2 border-dashed border-primary bg-primary/5 rounded-lg p-4 text-center">
+                    <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-2">
+                      <Database className="h-4 w-4 text-primary" />
+                    </div>
+                    <p className="text-sm font-medium text-primary">Drop file here</p>
+                    <p className="text-xs text-muted-foreground">Release to upload</p>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg">File Selected</CardTitle>
+                  <CardDescription>Confirmation state with file details</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="border-2 border-dashed border-green-300 bg-green-50 dark:bg-green-950/20 rounded-lg p-4 text-center">
+                    <div className="w-8 h-8 rounded-full bg-green-100 dark:bg-green-900 flex items-center justify-center mx-auto mb-2">
+                      <Database className="h-4 w-4 text-green-600" />
+                    </div>
+                    <p className="text-sm font-medium">conversations.csv</p>
+                    <p className="text-xs text-muted-foreground">2.3 KB • Ready</p>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
           </div>
         </section>
 
