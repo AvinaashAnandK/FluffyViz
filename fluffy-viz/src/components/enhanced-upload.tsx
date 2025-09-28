@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useCallback } from 'react';
-import { Upload as UploadIcon, FileText, AlertCircle, CheckCircle, CloudUpload, File, Database, Sparkles } from 'lucide-react';
+import { Upload as UploadIcon, FileText, AlertCircle, CheckCircle, CloudUpload, File, Database, Sparkles, X } from 'lucide-react';
 import Papa from 'papaparse';
 
 import { Button } from '@/components/ui/button';
@@ -19,6 +19,7 @@ import {
 
 import { FormatDetector } from '@/lib/format-detector';
 import { DataProcessor } from '@/lib/data-processor';
+import { cn } from '@/lib/utils';
 import {
   SupportedFormat,
   FormatDetectionResult,
@@ -115,7 +116,7 @@ export function EnhancedUpload({ onDataUploaded, onFormatDetected }: UploadProps
     setProcessing(true);
     setProgress(20);
 
-    // Reset preview data and detection results
+    // Reset preview data and detection results for new file
     setPreviewData([]);
     setDetectionResult(null);
     setSelectedFormat('');
@@ -137,6 +138,17 @@ export function EnhancedUpload({ onDataUploaded, onFormatDetected }: UploadProps
       setProcessing(false);
     }
   }, [onFormatDetected, generatePreview]);
+
+  const removeFile = useCallback(() => {
+    setFile(null);
+    setProcessing(false);
+    setProgress(0);
+    // Clear all detection results and preview data when file is dismissed
+    setPreviewData([]);
+    setDetectionResult(null);
+    setSelectedFormat('');
+    setFieldMappings([]);
+  }, []);
 
   const handleDrag = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -256,23 +268,38 @@ export function EnhancedUpload({ onDataUploaded, onFormatDetected }: UploadProps
               </div>
 
               {/* Content */}
-              <div className="space-y-2">
-                <p className="text-xl font-semibold">
-                  {file ? (
-                    <span className="text-green-700 flex items-center justify-center space-x-2">
-                      <span>{file.name}</span>
-                      <Badge variant="secondary" className="text-xs">
-                        {(file.size / 1024).toFixed(1)} KB
-                      </Badge>
-                    </span>
-                  ) : (
-                    'Drop your file here or click to browse'
-                  )}
-                </p>
-                <p className="text-sm text-muted-foreground">
-                  {file ? 'File ready for processing' : 'Maximum file size: 10MB'}
-                </p>
-              </div>
+              {file ? (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-center space-x-3">
+                    <File className="h-5 w-5 text-green-600" />
+                    <span className="text-lg font-semibold text-green-700">{file.name}</span>
+                    <Badge variant="secondary" className="text-xs">
+                      {(file.size / 1024).toFixed(1)} KB
+                    </Badge>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={removeFile}
+                      className="h-6 w-6 p-0 text-muted-foreground hover:text-red-600"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  <p className="text-sm text-muted-foreground">File ready for processing</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div>
+                    <h3 className="text-lg font-medium">Analyze, enrich, expand your data</h3>
+                    <p className="text-muted-foreground">Upload your conversational data to get started</p>
+                  </div>
+                  <div className="space-y-2">
+                    <p className="text-xs text-muted-foreground">
+                      Supports CSV, JSON, JSONL, and TXT files
+                    </p>
+                  </div>
+                </div>
+              )}
 
               {/* Action Button */}
               <input
@@ -288,7 +315,8 @@ export function EnhancedUpload({ onDataUploaded, onFormatDetected }: UploadProps
                 className={`mt-6 ${file ? 'bg-green-600 hover:bg-green-700' : ''}`}
               >
                 <label htmlFor="file-upload" className="cursor-pointer">
-                  {file ? 'Change File' : 'Browse Files'}
+                  <UploadIcon className="mr-2 h-4 w-4" />
+                  {file ? 'Change File' : 'Drop or click to import a file'}
                 </label>
               </Button>
             </div>

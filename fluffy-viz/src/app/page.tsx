@@ -28,7 +28,14 @@ export default function Home() {
       {/* Hero Section */}
       <section className="px-8 py-20 text-center">
         <div className="max-w-4xl mx-auto space-y-8">
-          <h1 className="text-6xl font-bold text-primary">FluffyViz</h1>
+          <div className="flex items-center justify-center space-x-4">
+            <img
+              src="/FluffyVisualizer.png"
+              alt="FluffyViz Logo"
+              className="w-16 h-16 object-contain"
+            />
+            <h1 className="text-6xl font-bold text-primary">FluffyViz</h1>
+          </div>
           <p className="text-2xl text-muted-foreground max-w-4xl mx-auto">
             Transform AI agent output data into actionable insights through iterative augmentation and visualization
           </p>
