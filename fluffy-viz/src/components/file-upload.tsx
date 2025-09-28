@@ -145,38 +145,6 @@ export function FileUploadArea({ className, onFileSelect, onDescriptionChange }:
         )}
       </div>
 
-      {/* Description Area */}
-      <div className="space-y-3">
-        <div className="text-center text-muted-foreground text-sm">OR</div>
-        <div className="space-y-3">
-          <Textarea
-            placeholder="Write your dataset description here..."
-            value={description}
-            onChange={(e) => handleDescriptionChange(e.target.value)}
-            className="min-h-[100px] resize-none"
-          />
-          <div className="flex items-center space-x-2 text-sm text-muted-foreground">
-            <Search className="h-4 w-4" />
-            <span>Describe your conversational data for AI analysis</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Trending Examples */}
-      <div className="space-y-3">
-        <p className="text-sm text-muted-foreground">Trending for data analysis:</p>
-        <div className="flex flex-wrap gap-2">
-          <Badge variant="outline" className="cursor-pointer hover:bg-muted">
-            Customer support conversations
-          </Badge>
-          <Badge variant="outline" className="cursor-pointer hover:bg-muted">
-            Sales call transcripts
-          </Badge>
-          <Badge variant="outline" className="cursor-pointer hover:bg-muted">
-            Product feedback analysis
-          </Badge>
-        </div>
-      </div>
     </div>
   )
 }

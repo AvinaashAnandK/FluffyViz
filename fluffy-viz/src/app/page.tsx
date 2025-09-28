@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { FileUploadArea } from "@/components/file-upload";
+import { Github } from "lucide-react";
 
 export default function Home() {
   return (
@@ -12,25 +13,9 @@ export default function Home() {
       <section className="px-8 py-20 text-center">
         <div className="max-w-4xl mx-auto space-y-8">
           <h1 className="text-6xl font-bold text-primary">FluffyViz</h1>
-          <p className="text-2xl text-muted-foreground max-w-2xl mx-auto">
+          <p className="text-2xl text-muted-foreground max-w-4xl mx-auto">
             Transform AI agent output data into actionable insights through iterative augmentation and visualization
           </p>
-          <div className="flex gap-4 justify-center">
-            <Button size="lg" asChild>
-              <Link href="/style-guide">View Style Guide</Link>
-            </Button>
-            <Button
-              variant="outline"
-              size="lg"
-              onClick={() => {
-                document.getElementById('upload-section')?.scrollIntoView({
-                  behavior: 'smooth'
-                })
-              }}
-            >
-              Get Started
-            </Button>
-          </div>
         </div>
       </section>
 
@@ -121,19 +106,22 @@ export default function Home() {
         </div>
       </section>
 
-      {/* CTA Section */}
+      {/* Credits Section */}
       <section className="px-8 py-20 bg-primary text-primary-foreground text-center">
         <div className="max-w-2xl mx-auto space-y-6">
-          <h2 className="text-4xl font-bold">Ready to visualize your AI data?</h2>
-          <p className="text-xl opacity-90">
-            Start transforming your unstructured conversations into actionable insights today
-          </p>
+          <h2 className="text-4xl font-bold">Built with Open Source</h2>
           <div className="flex gap-4 justify-center">
-            <Button size="lg" variant="secondary">
-              Start Free Trial
+            <Button size="lg" variant="secondary" asChild>
+              <Link href="https://github.com/huggingface/aisheets" target="_blank" rel="noopener noreferrer">
+                <Github className="mr-2 h-5 w-5" />
+                HuggingFace AISheets
+              </Link>
             </Button>
-            <Button size="lg" variant="outline" className="text-primary-foreground border-primary-foreground hover:bg-primary-foreground hover:text-primary">
-              Request Demo
+            <Button size="lg" variant="secondary" asChild>
+              <Link href="https://github.com/apple/embedding-atlas" target="_blank" rel="noopener noreferrer">
+                <Github className="mr-2 h-5 w-5" />
+                Apple Embedding Atlas
+              </Link>
             </Button>
           </div>
         </div>
