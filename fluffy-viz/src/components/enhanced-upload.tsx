@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { Upload as UploadIcon, FileText, AlertCircle, CheckCircle, CloudUpload, File, Database, Sparkles, X } from 'lucide-react';
 import Papa from 'papaparse';
 
@@ -31,9 +31,18 @@ import {
 interface UploadProps {
   onDataUploaded: (result: UploadResult) => void;
   onFormatDetected: (result: FormatDetectionResult) => void;
+  onFileSelected?: (file: File) => void;
+  initialDetectionResult?: FormatDetectionResult | null;
+  initialPreviewData?: any[];
 }
 
-export function EnhancedUpload({ onDataUploaded, onFormatDetected }: UploadProps) {
+export function EnhancedUpload({
+  onDataUploaded,
+  onFormatDetected,
+  onFileSelected,
+  initialDetectionResult,
+  initialPreviewData
+}: UploadProps) {
   const [file, setFile] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [processing, setProcessing] = useState(false);
@@ -42,6 +51,23 @@ export function EnhancedUpload({ onDataUploaded, onFormatDetected }: UploadProps
   const [selectedFormat, setSelectedFormat] = useState<SupportedFormat | ''>('');
   const [previewData, setPreviewData] = useState<any[]>([]);
   const [fieldMappings, setFieldMappings] = useState<FieldMapping[]>([]);
+
+  // Initialize with provided data when props change
+  useEffect(() => {
+    if (initialDetectionResult) {
+      setDetectionResult(initialDetectionResult);
+      setSelectedFormat(initialDetectionResult.detectedFormat || '');
+    } else {
+      setDetectionResult(null);
+      setSelectedFormat('');
+    }
+
+    if (initialPreviewData) {
+      setPreviewData(initialPreviewData);
+    } else {
+      setPreviewData([]);
+    }
+  }, [initialDetectionResult, initialPreviewData]);
 
   const readFileContent = useCallback((file: File, maxLines?: number): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -116,6 +142,9 @@ export function EnhancedUpload({ onDataUploaded, onFormatDetected }: UploadProps
     setProcessing(true);
     setProgress(20);
 
+    // Notify parent component about file selection
+    onFileSelected?.(selectedFile);
+
     // Reset preview data and detection results for new file
     setPreviewData([]);
     setDetectionResult(null);
@@ -137,7 +166,7 @@ export function EnhancedUpload({ onDataUploaded, onFormatDetected }: UploadProps
     } finally {
       setProcessing(false);
     }
-  }, [onFormatDetected, generatePreview]);
+  }, [onFileSelected, onFormatDetected, generatePreview]);
 
   const removeFile = useCallback(() => {
     setFile(null);
@@ -203,42 +232,29 @@ export function EnhancedUpload({ onDataUploaded, onFormatDetected }: UploadProps
   };
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       {/* Header Section */}
-      <div className="text-center space-y-4">
+      <div className="text-center space-y-3">
         <div className="flex items-center justify-center space-x-2">
-          <CloudUpload className="h-8 w-8 text-primary" />
-          <h2 className="text-3xl font-bold tracking-tight">Upload Agent Data</h2>
+          <CloudUpload className="h-6 w-6 text-primary" />
+          <h2 className="text-2xl font-bold tracking-tight">Upload Agent Data</h2>
         </div>
-        <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-          Transform your agent conversation data into actionable insights. Upload CSV, JSON, or JSONL files to get started.
+        <p className="text-sm text-muted-foreground">
+          Transform your conversation data into actionable insights
         </p>
-
-        {/* Supported Formats */}
-        <div className="flex items-center justify-center space-x-2">
-          <span className="text-sm text-muted-foreground">Supported formats:</span>
-          <Badge variant="outline" className="text-xs">CSV</Badge>
-          <Badge variant="outline" className="text-xs">JSON</Badge>
-          <Badge variant="outline" className="text-xs">JSONL</Badge>
-        </div>
       </div>
-
-      <Separator />
 
       {/* Upload Card */}
       <Card className="border-2 hover:border-primary/20 transition-colors">
-        <CardHeader className="text-center pb-4">
-          <CardTitle className="flex items-center justify-center space-x-2">
-            <Database className="h-5 w-5 text-primary" />
-            <span>Data Upload</span>
-          </CardTitle>
-          <CardDescription>
-            Drag & drop your file or click to browse from your computer
+        <CardHeader className="text-center pb-3">
+          <CardTitle className="text-lg">Data Upload</CardTitle>
+          <CardDescription className="text-sm">
+            Drag & drop or click to browse
           </CardDescription>
         </CardHeader>
         <CardContent>
           <div
-            className={`border-2 border-dashed rounded-xl p-12 text-center transition-all duration-200 ${
+            className={`border-2 border-dashed rounded-xl p-8 text-center transition-all duration-200 ${
               dragActive
                 ? 'border-primary bg-primary/5 scale-[1.01] shadow-lg'
                 : file
@@ -250,18 +266,18 @@ export function EnhancedUpload({ onDataUploaded, onFormatDetected }: UploadProps
             onDragOver={handleDrag}
             onDrop={handleDrop}
           >
-            <div className="space-y-6">
+            <div className="space-y-4">
               {/* Icon */}
               <div className="relative">
                 {file ? (
                   <div className="flex items-center justify-center">
                     <div className="relative">
-                      <File className="h-16 w-16 text-green-500 mx-auto" />
-                      <CheckCircle className="h-6 w-6 text-green-500 absolute -top-1 -right-1 bg-background rounded-full" />
+                      <File className="h-12 w-12 text-green-500 mx-auto" />
+                      <CheckCircle className="h-5 w-5 text-green-500 absolute -top-1 -right-1 bg-background rounded-full" />
                     </div>
                   </div>
                 ) : (
-                  <CloudUpload className={`h-16 w-16 mx-auto transition-colors ${
+                  <CloudUpload className={`h-12 w-12 mx-auto transition-colors ${
                     dragActive ? 'text-primary' : 'text-muted-foreground'
                   }`} />
                 )}
@@ -288,15 +304,10 @@ export function EnhancedUpload({ onDataUploaded, onFormatDetected }: UploadProps
                   <p className="text-sm text-muted-foreground">File ready for processing</p>
                 </div>
               ) : (
-                <div className="space-y-4">
+                <div className="space-y-3">
                   <div>
-                    <h3 className="text-lg font-medium">Analyze, enrich, expand your data</h3>
-                    <p className="text-muted-foreground">Upload your conversational data to get started</p>
-                  </div>
-                  <div className="space-y-2">
-                    <p className="text-xs text-muted-foreground">
-                      Supports CSV, JSON, JSONL, and TXT files
-                    </p>
+                    <h3 className="text-lg font-medium">Drop your data file here</h3>
+                    <p className="text-sm text-muted-foreground">CSV, JSON, JSONL supported</p>
                   </div>
                 </div>
               )}

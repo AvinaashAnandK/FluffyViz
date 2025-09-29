@@ -17,3 +17,25 @@ Four Main Steps:
 4. Visualize → Export enriched dataset directly to Embedding Atlas
 
 # The tool will be called Fluffy Visualizer
+
+Ultrathink
+1. Compare the upload component to the style guide @fluffy-viz/src/app/style-guide/. First from a component tailwind styling point of view and then from a UI point of view using the Chrome MCP and iteratively make the fixes such that it adheres to the style guide.
+2. Incorporate the logo @FluffyVisualizer.png into the page?
+3. Ensure that format detection and data preview is not persistent after dismissing the uploaded file.
+
+Think hard, 
+1. Git commit this
+2. Update the context file of everything done until now to give context to the next developer working on the next task. Add it to
+  @ProjectDetails/development-context.md folder as a markdown file.
+
+Ultrathink. 
+I want to introduce a sidebar. Inspired by the sidebar in the dashboard block here in this shadcn implementation `https://ui.shadcn.com/blocks`. 
+1. It should toggle on click, and we want to show the uploaded files. 
+2. I want to save the uploaded file locally and give the option to the user to shuffle between the agent datasets that they have uploaded. 
+3. Let's use #D1CCDC as the background to the sidebar. 
+4. Post implementation, I want you to check with the chrome mcp and the console logs uploading each file in @fluffy-viz/public/sample-data/
+
+Think hard, 
+1. Git commit this
+2. Update the context file of everything done until now to give context to the next developer working on the next task. Add it to
+  @ProjectDetails/development-context.md folder as a markdown file.
