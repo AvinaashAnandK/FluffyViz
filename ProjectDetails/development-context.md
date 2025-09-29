@@ -401,6 +401,14 @@ With the sidebar and file management system complete, the next developer should 
 - `sample-snowglobe-json.json` - For JSON format testing
 - Located in project root for easy testing access
 
+## Recent Updates
+
+### 2025-09-30
+- Added `src/components/ai-provider-config-demo.tsx` to power the "Configure LLM Providers" modal.
+- Fixed provider list layout so the left rail no longer stretches past its content and the surrounding card grows with its inner sections (`items-start` grid alignment, `h-fit` card sizing).
+- Introduced an eye toggle for API keys with read-only + disabled states after saving, reverting when cleared; also hides the key whenever the provider changes or a key is saved/cleared.
+- Updated modal controls to disable the "Save key" button once a key has been stored, preventing accidental edits until the user clears the field.
+
 ---
-*Last Updated: 2025-02-05*
-*Context prepared for agent dataset persistence and upcoming data processing work*
+*Last Updated: 2025-09-30*
+*Context prepared following LLM provider configuration UX polish and credential-handling safeguards*
