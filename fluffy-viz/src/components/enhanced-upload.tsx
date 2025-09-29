@@ -1,14 +1,13 @@
 'use client';
 
-import React, { useState, useCallback, useEffect } from 'react';
-import { Upload as UploadIcon, FileText, AlertCircle, CheckCircle, CloudUpload, File, Database, Sparkles, X } from 'lucide-react';
+import React, { useState, useCallback, useEffect, useImperativeHandle, forwardRef } from 'react';
+import { Upload as UploadIcon, FileText, AlertCircle, CheckCircle, Database, Sparkles, X } from 'lucide-react';
 import Papa from 'papaparse';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
-import { Separator } from '@/components/ui/separator';
 import {
   Select,
   SelectContent,
@@ -23,26 +22,36 @@ import { cn } from '@/lib/utils';
 import {
   SupportedFormat,
   FormatDetectionResult,
-  NormalizedAgentData,
   FieldMapping,
   UploadResult,
 } from '@/types';
+import { useFileStorage } from '@/hooks/use-file-storage';
+import { FileSelectionContext, FileSelectionSource } from '@/types/file-storage';
+
+interface FileSelectionOptions extends Partial<FileSelectionContext> {
+  skipInitialSave?: boolean;
+}
+
+export interface EnhancedUploadHandle {
+  loadFile: (file: File, options?: FileSelectionOptions) => Promise<void>;
+  clear: () => void;
+}
 
 interface UploadProps {
   onDataUploaded: (result: UploadResult) => void;
   onFormatDetected: (result: FormatDetectionResult) => void;
-  onFileSelected?: (file: File) => void;
+  onFileSelected?: (file: File, context?: FileSelectionContext) => void;
   initialDetectionResult?: FormatDetectionResult | null;
   initialPreviewData?: any[];
 }
 
-export function EnhancedUpload({
+export const EnhancedUpload = forwardRef<EnhancedUploadHandle, UploadProps>(({
   onDataUploaded,
   onFormatDetected,
   onFileSelected,
   initialDetectionResult,
   initialPreviewData
-}: UploadProps) {
+}, ref) => {
   const [file, setFile] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [processing, setProcessing] = useState(false);
@@ -51,6 +60,9 @@ export function EnhancedUpload({
   const [selectedFormat, setSelectedFormat] = useState<SupportedFormat | ''>('');
   const [previewData, setPreviewData] = useState<any[]>([]);
   const [fieldMappings, setFieldMappings] = useState<FieldMapping[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [savedFileId, setSavedFileId] = useState<string | null>(null);
+  const { saveFile } = useFileStorage();
 
   // Initialize with provided data when props change
   useEffect(() => {
@@ -137,46 +149,96 @@ export function EnhancedUpload({
     }
   }, [readFileContent]);
 
-  const handleFileSelect = useCallback(async (selectedFile: File) => {
+  const validateFile = useCallback((file: File): string | null => {
+    // Check file size (max 25MB)
+    const maxSize = 25 * 1024 * 1024; // 25MB in bytes
+    if (file.size > maxSize) {
+      return 'File size must be less than 25MB';
+    }
+
+    // Check file type
+    const allowedTypes = ['.csv', '.json', '.jsonl', '.txt'];
+    const fileExtension = '.' + file.name.split('.').pop()?.toLowerCase();
+    if (!allowedTypes.includes(fileExtension)) {
+      return 'File type not supported. Please upload CSV, JSON, JSONL, or TXT files only.';
+    }
+
+    return null;
+  }, []);
+
+  const handleFileSelect = useCallback(async (selectedFile: File, options: FileSelectionOptions = {}) => {
+    const {
+      skipInitialSave = false,
+      source: providedSource,
+      storedFileId
+    } = options;
+
+    const resolvedSource: FileSelectionSource = providedSource ?? 'main-upload';
+
+    setError(null);
+
+    const validationError = validateFile(selectedFile);
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+
     setFile(selectedFile);
     setProcessing(true);
+    setProgress(0);
     setProgress(20);
+    setSavedFileId(storedFileId ?? null);
 
-    // Notify parent component about file selection
-    onFileSelected?.(selectedFile);
+    onFileSelected?.(selectedFile, { source: resolvedSource, storedFileId });
 
-    // Reset preview data and detection results for new file
     setPreviewData([]);
     setDetectionResult(null);
     setSelectedFormat('');
+    setFieldMappings([]);
 
     try {
-      // Detect format
       const result = await FormatDetector.detectFormat(selectedFile);
       setDetectionResult(result);
       setSelectedFormat(result.detectedFormat || '');
       onFormatDetected(result);
       setProgress(60);
 
-      // Generate preview
       await generatePreview(selectedFile, result.detectedFormat);
+      setProgress(80);
+
+      if (!skipInitialSave && result.detectedFormat && result.errors.length === 0) {
+        const fileContent = await readFileContent(selectedFile);
+        const persistedId = await saveFile(
+          fileContent,
+          selectedFile.name,
+          result.detectedFormat,
+          selectedFile.type,
+          storedFileId
+        );
+        setSavedFileId(persistedId);
+        setProgress(90);
+      }
+
       setProgress(100);
     } catch (error) {
       console.error('Error processing file:', error);
+      setError('Error processing file. Please try again.');
     } finally {
       setProcessing(false);
     }
-  }, [onFileSelected, onFormatDetected, generatePreview]);
+  }, [validateFile, onFileSelected, onFormatDetected, generatePreview, readFileContent, saveFile]);
 
   const removeFile = useCallback(() => {
     setFile(null);
     setProcessing(false);
     setProgress(0);
+    setError(null);
     // Clear all detection results and preview data when file is dismissed
     setPreviewData([]);
     setDetectionResult(null);
     setSelectedFormat('');
     setFieldMappings([]);
+    setSavedFileId(null);
   }, []);
 
   const handleDrag = useCallback((e: React.DragEvent) => {
@@ -195,14 +257,14 @@ export function EnhancedUpload({
     setDragActive(false);
 
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      handleFileSelect(e.dataTransfer.files[0]);
+      handleFileSelect(e.dataTransfer.files[0], { source: 'main-upload' });
     }
   }, [handleFileSelect]);
 
 
   const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      handleFileSelect(e.target.files[0]);
+      handleFileSelect(e.target.files[0], { source: 'main-upload' });
     }
   };
 
@@ -215,6 +277,18 @@ export function EnhancedUpload({
     try {
       setProgress(20);
 
+      const fileContent = await readFileContent(file);
+      const persistedId = await saveFile(
+        fileContent,
+        file.name,
+        selectedFormat,
+        file.type,
+        savedFileId ?? undefined
+      );
+      setSavedFileId(persistedId);
+
+      setProgress(40);
+
       // Process the file using the DataProcessor
       const result = await DataProcessor.processFile(file, selectedFormat, fieldMappings);
 
@@ -226,137 +300,160 @@ export function EnhancedUpload({
       setProgress(100);
     } catch (error) {
       console.error('Error processing data:', error);
+      setError('Error processing file. Please try again.');
     } finally {
       setProcessing(false);
     }
   };
 
+  useImperativeHandle(ref, () => ({
+    loadFile: (externalFile: File, options?: FileSelectionOptions) =>
+      handleFileSelect(externalFile, options),
+    clear: () => removeFile()
+  }), [handleFileSelect, removeFile]);
+
   return (
     <div className="space-y-6">
-      {/* Header Section */}
-      <div className="text-center space-y-3">
-        <div className="flex items-center justify-center space-x-2">
-          <CloudUpload className="h-6 w-6 text-primary" />
-          <h2 className="text-2xl font-bold tracking-tight">Upload Agent Data</h2>
-        </div>
-        <p className="text-sm text-muted-foreground">
-          Transform your conversation data into actionable insights
-        </p>
-      </div>
+      {/* Upload Card - Consolidated Header and Content */}
+      <div className="rounded-2xl shadow-sm text-center">
+        {/* Title and Subtitle */}
+        {/* Drop Zone */}
+        <div
+          className={cn(
+            "border-2 border-dashed rounded-xl py-6 px-6 text-center transition-all duration-200 cursor-pointer focus:outline-none",
+            file
+              ? 'border-green-400 bg-green-50'
+              : dragActive
+              ? 'border-primary bg-primary/10'
+              : 'border-neutral-300 hover:border-primary hover:bg-primary/5'
+          )}
+          onDragEnter={handleDrag}
+          onDragLeave={handleDrag}
+          onDragOver={handleDrag}
+          onDrop={handleDrop}
+          onClick={() => {
+            setError(null);
+            document.getElementById('file-upload')?.click();
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              setError(null);
+              document.getElementById('file-upload')?.click();
+            }
+          }}
+          tabIndex={0}
+          role="button"
+          aria-label="Upload file area"
+        >
+          {file ? (
+            /* Success State */
+            <div className="flex flex-col items-center">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-green-500/10 text-green-500 ring-2 ring-green-500/20">
+                <CheckCircle className="h-6 w-6" />
+                <span className="sr-only">Upload complete</span>
+              </div>
 
-      {/* Upload Card */}
-      <Card className="border-2 hover:border-primary/20 transition-colors">
-        <CardHeader className="text-center pb-3">
-          <CardTitle className="text-lg">Data Upload</CardTitle>
-          <CardDescription className="text-sm">
-            Drag & drop or click to browse
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div
-            className={`border-2 border-dashed rounded-xl p-8 text-center transition-all duration-200 ${
-              dragActive
-                ? 'border-primary bg-primary/5 scale-[1.01] shadow-lg'
-                : file
-                ? 'border-green-300 bg-green-50/50'
-                : 'border-muted-foreground/25 hover:border-primary/50 hover:bg-muted/30'
-            }`}
-            onDragEnter={handleDrag}
-            onDragLeave={handleDrag}
-            onDragOver={handleDrag}
-            onDrop={handleDrop}
-          >
-            <div className="space-y-4">
-              {/* Icon */}
-              <div className="relative">
-                {file ? (
-                  <div className="flex items-center justify-center">
-                    <div className="relative">
-                      <File className="h-12 w-12 text-green-500 mx-auto" />
-                      <CheckCircle className="h-5 w-5 text-green-500 absolute -top-1 -right-1 bg-background rounded-full" />
+              <h2 className="mt-4 text-lg font-semibold tracking-tight">File ready for processing</h2>
+
+              <Card className="mt-6 w-full max-w-md border border-green-500/20 bg-green-500/5 p-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-md bg-green-500/15 text-green-500">
+                      <FileText className="h-5 w-5" />
+                    </div>
+                    <div className="text-left min-w-0">
+                      <p className="truncate text-sm font-medium">{file.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {file.size < 1024
+                          ? `${file.size} B`
+                          : file.size < 1024 * 1024
+                          ? `${(file.size / 1024).toFixed(1)} KB`
+                          : `${(file.size / (1024 * 1024)).toFixed(1)} MB`
+                        }
+                      </p>
                     </div>
                   </div>
-                ) : (
-                  <CloudUpload className={`h-12 w-12 mx-auto transition-colors ${
-                    dragActive ? 'text-primary' : 'text-muted-foreground'
-                  }`} />
-                )}
-              </div>
 
-              {/* Content */}
-              {file ? (
-                <div className="space-y-4">
-                  <div className="flex items-center justify-center space-x-3">
-                    <File className="h-5 w-5 text-green-600" />
-                    <span className="text-lg font-semibold text-green-700">{file.name}</span>
-                    <Badge variant="secondary" className="text-xs">
-                      {(file.size / 1024).toFixed(1)} KB
-                    </Badge>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={removeFile}
-                      className="h-6 w-6 p-0 text-muted-foreground hover:text-red-600"
-                    >
-                      <X className="h-4 w-4" />
-                    </Button>
-                  </div>
-                  <p className="text-sm text-muted-foreground">File ready for processing</p>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      removeFile();
+                    }}
+                    aria-label="Remove file"
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:text-destructive hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
                 </div>
-              ) : (
-                <div className="space-y-3">
-                  <div>
-                    <h3 className="text-lg font-medium">Drop your data file here</h3>
-                    <p className="text-sm text-muted-foreground">CSV, JSON, JSONL supported</p>
-                  </div>
-                </div>
-              )}
-
-              {/* Action Button */}
-              <input
-                type="file"
-                accept=".csv,.json,.jsonl"
-                onChange={handleFileInputChange}
-                className="hidden"
-                id="file-upload"
-              />
-              <Button
-                asChild
-                size="lg"
-                className={`mt-6 ${file ? 'bg-green-600 hover:bg-green-700' : ''}`}
-              >
-                <label htmlFor="file-upload" className="cursor-pointer">
-                  <UploadIcon className="mr-2 h-4 w-4" />
-                  {file ? 'Change File' : 'Drop or click to import a file'}
-                </label>
-              </Button>
+              </Card>
             </div>
-          </div>
-
-          {processing && (
-            <div className="mt-6 space-y-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2">
-                  <Sparkles className="h-4 w-4 text-primary animate-pulse" />
-                  <span className="text-sm font-medium">Processing file...</span>
-                </div>
-                <Badge variant="outline" className="text-xs">
-                  {progress}%
-                </Badge>
+          ) : (
+            /* Idle State */
+            <div className="space-y-2">
+              <div className="inline-flex items-center justify-center w-12 h-12 bg-gray-100 rounded-full mx-auto mb-4">
+                <UploadIcon className="h-6 w-6 text-neutral-400" />
               </div>
-              <Progress value={progress} className="h-2" />
+              <div className="space-y-3">
+                <h4 className="text-lg font-semibold text-neutral-800">Analyze, enrich, expand your data</h4>
+              </div>
+              <div className="inline-flex items-center justify-center bg-primary hover:bg-primary/90 text-white px-8 py-2 rounded-lg font-medium transition-colors">
+                <UploadIcon className="h-4 w-4 mr-4" />
+                Drop or click to import a file
+              </div>
+              <p className="text-sm text-neutral-500">Supports CSV, JSON, and JSONL files</p>
             </div>
           )}
-        </CardContent>
-      </Card>
+
+          {/* Hidden File Input */}
+          <input
+            type="file"
+            accept=".csv,.json,.jsonl,.txt"
+            onChange={handleFileInputChange}
+            className="hidden"
+            id="file-upload"
+            aria-describedby="file-upload-description"
+          />
+        </div>
+
+        {/* Error State */}
+        {error && (
+          <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg" role="alert">
+            <p className="text-sm text-red-600">{error}</p>
+          </div>
+        )}
+
+        {/* Processing State */}
+        {processing && (
+          <div className="mt-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <Sparkles className="h-4 w-4 text-primary animate-pulse" />
+                <span className="text-sm font-medium">Processing file...</span>
+              </div>
+              <Badge variant="outline" className="text-xs">
+                {progress}%
+              </Badge>
+            </div>
+            <Progress value={progress} className="h-2" />
+          </div>
+        )}
+
+        {/* File Upload Description for Screen Readers */}
+        <div id="file-upload-description" className="sr-only">
+          Upload area for CSV, JSON, JSONL, and TXT files. Maximum file size is 25MB.
+        </div>
+      </div>
 
       {detectionResult && (
-        <Card className="border-l-4 border-l-primary">
+        <Card className="border-l-4 border-l-secondary">
           <CardHeader>
             <CardTitle className="flex items-center gap-3">
-              <div className={`p-2 rounded-full ${
+              <div className={cn(
+                "p-2 rounded-full",
                 detectionResult.detectedFormat ? 'bg-green-100 text-green-600' : 'bg-yellow-100 text-yellow-600'
-              }`}>
+              )}>
                 {detectionResult.detectedFormat ? (
                   <CheckCircle className="h-5 w-5" />
                 ) : (
@@ -489,7 +586,7 @@ export function EnhancedUpload({
       )}
 
       {previewData.length > 0 && (
-        <Card className="border-l-4 border-l-blue-500">
+        <Card className="border-l-4 border-l-secondary">
           <CardHeader>
             <CardTitle className="flex items-center gap-3">
               <div className="p-2 bg-blue-100 text-blue-600 rounded-full">
@@ -556,4 +653,6 @@ export function EnhancedUpload({
       )}
     </div>
   );
-}
+});
+
+EnhancedUpload.displayName = 'EnhancedUpload';

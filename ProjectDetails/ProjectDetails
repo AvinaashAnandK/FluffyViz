@@ -28,6 +28,18 @@ Think hard,
 2. Update the context file of everything done until now to give context to the next developer working on the next task. Add it to
   @ProjectDetails/development-context.md folder as a markdown file.
 
+
+Think hard to do the following, 
+1. Currently when the file is uploaded using enhanced-upload.tsx component, It is not actually saved to disk. Instead, the component holds the file in memory. I want to store it in the browser. 
+2. On the left hand side of <SidebarTrigger className="h-8 w-8" /> component I want to show a counter of the files stored in memory. 
+3. In the sidebar, I want to introduce a section called `Agent Datasets`, show the counter, so the counter in the header would be hidden when the sidebar is open. 
+4. Beneath the counter show the same button `Drop or click to import a file` that we have in enhanced upload. 
+5. Beneath the button show the list of files stored. Each entity in the list will be file name and Format of the file as a badge (e.g. TURN LEVEL, ARIZE), show last modified time, and have two buttons - one to delete individual file from browser storage and rename the file. 
+6. When the user clicks on a file, the experience should be the same as if the user uploads the file. It should run the enhanced upload component the same way.  
+7. Finally above the configure LLM Provider section have a button called delete all files. When clicked, it should open up a modal asking the users to confirm. 
+
+Check for linting errors, Next js compile errors, and using the playwright MCP (maximize the window) for UI flow using all the files in sample-data. 
+
 Ultrathink. 
 I want to introduce a sidebar. Inspired by the sidebar in the dashboard block here in this shadcn implementation `https://ui.shadcn.com/blocks`. 
 1. It should toggle on click, and we want to show the uploaded files. 
@@ -39,3 +51,24 @@ Think hard,
 1. Git commit this
 2. Update the context file of everything done until now to give context to the next developer working on the next task. Add it to
   @ProjectDetails/development-context.md folder as a markdown file.
+
+
+For the following task, I want you to ultrathink. Okay, the Chrome MCP is spazzing. I want you to use the Playwright MCP for the following task. 
+1. Functionality wise, when a file is uploaded using the upload data compenent in the homepage, the format detection and data preview components, process data parts are not rendered. However, I can see that the format is detected as it is rendered in the side bar. 
+2. In the topbar, let's show the count of files uploaded as a que for the user. 
+3. In the side bar, consider every upload as a new file, so render them as separate entities. We want to show data format as a category badge. The size of the dataset is not as important. Show the date in dd mon, hh:mm format as it is currently. I like the delete option, can we have a rename file button next to it. 
+4. Have button at the end of the uploaded file list component in the sidebar to delete all files. 
+5. At the bottom, have a disabled button with primary colours saying "Configure LLM Provider". 
+6. The sidebar background colour should be #D1CCDC
+7. The homepage upload component can use the Upload States component from the `/style-guide` page. 
+
+Finally, test with each of the files in `retained-upload-functionality/sample-data` to assess if all the design issues are fixed using the MCP and check the next js messages to see if it is functionally working in addition to other autonomous testing. 
+
+
+For the following task, I want you to think harder. Use the Playwright MCP wherever needed for the following task. 
+1. ![](<Screenshot 2025-09-29 at 9.45.16 AM.png>) In this screenshot, look at where the feedback is shown, this is bad user experience fix it. 
+2. ![](<Screenshot 2025-09-29 at 9.46.06 AM.png>) In the side bar, the file list is not scrollable. Let's fix the Delete All Files button above the Configure button section and make it scrollable.
+3. ![](<Screenshot 2025-09-29 at 9.47.21 AM.png>) The empty state is taking too much space on the screen, again very bad user experience. Be inspired by this ![](<Screenshot 2025-09-29 at 9.48.34 AM.png>) design to make it more user friendly. 
+4. When the uploaded file is selected from the sidebar, while the selection changes, the format detection, data preview, and process data components should be rendered. 
+
+Finally, test with each of the files in `retained-upload-functionality/sample-data` to assess if all the design issues are fixed using the MCP and check the next js messages to see if it is functionally working in addition to other autonomous testing. 

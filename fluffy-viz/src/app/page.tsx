@@ -1,142 +1,137 @@
 "use client"
 
 import Link from "next/link";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { EnhancedUpload } from "@/components/enhanced-upload";
+import { EnhancedUpload, EnhancedUploadHandle } from "@/components/enhanced-upload";
 import { AppSidebar } from "@/components/app-sidebar";
 import {
   SidebarProvider,
   SidebarInset,
   SidebarTrigger,
+  useSidebar,
 } from "@/components/ui/sidebar";
-import { useFileStorage } from "@/hooks/use-file-storage";
-import { Github, Menu, CheckCircle } from "lucide-react";
+import { Github } from "lucide-react";
 import { FormatDetectionResult, UploadResult } from "@/types";
+import { useFileStorage } from "@/hooks/use-file-storage";
+import { FileSelectionContext, FileSelectionEventDetail } from "@/types/file-storage";
 
-export default function Home() {
-  const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
+function HomeContent() {
+  const [_uploadResult, setUploadResult] = useState<UploadResult | null>(null);
   const [detectionResult, setDetectionResult] = useState<FormatDetectionResult | null>(null);
-  const [currentFile, setCurrentFile] = useState<File | null>(null);
+  const [pendingSidebarSelection, setPendingSidebarSelection] = useState<FileSelectionEventDetail | null>(null);
+  const uploadRef = useRef<EnhancedUploadHandle | null>(null);
+  const { files, fileCount } = useFileStorage();
+  const { open } = useSidebar();
+  const [activeStoredFileId, setActiveStoredFileId] = useState<string | null>(null);
 
-  const {
-    storedFiles,
-    activeFileId,
-    activeFile,
-    addFile,
-    removeFile,
-    selectFile,
-    updateFileData,
-    renameFile
-  } = useFileStorage();
 
-  // Handle when a stored file is selected from sidebar
-  useEffect(() => {
-    if (activeFile) {
-      console.log('Loaded stored file:', activeFile);
-
-      // Set detection result if it exists
-      if (activeFile.detectionResult) {
-        setDetectionResult(activeFile.detectionResult);
-      } else {
-        setDetectionResult(null);
-      }
-
-      // Clear other states when switching files
-      setUploadResult(null);
-      setCurrentFile(null);
-    } else {
-      // No active file, clear states
-      setDetectionResult(null);
-      setUploadResult(null);
-      setCurrentFile(null);
-    }
-  }, [activeFile]);
 
   const handleDataUploaded = (result: UploadResult) => {
     setUploadResult(result);
     console.log('Data processed:', result);
-
-    // Update the stored file with processing results
-    if (activeFileId && currentFile) {
-      updateFileData(activeFileId, {
-        detectionResult,
-        previewData: result.data?.slice(0, 10) // Store first 10 rows as preview
-      });
-    }
   };
 
   const handleFormatDetected = (result: FormatDetectionResult) => {
     setDetectionResult(result);
     console.log('Format detected:', result);
+  };
 
-    // Update stored file with detection results
-    if (activeFileId) {
-      updateFileData(activeFileId, {
-        detectionResult: result,
-        selectedFormat: result.detectedFormat
-      });
+  const handleFileSelected = (file: File, context?: FileSelectionContext) => {
+    setActiveStoredFileId(context?.storedFileId ?? null);
+    console.log('File selected:', file.name, context);
+  };
+
+  useEffect(() => {
+    const handleSidebarFileSelected = (event: CustomEvent<FileSelectionEventDetail>) => {
+      const detail = event.detail;
+      setActiveStoredFileId(detail.storedFileId ?? null);
+      setPendingSidebarSelection(detail);
+      document.getElementById('upload-section')?.scrollIntoView({ behavior: 'smooth' });
+    };
+
+    window.addEventListener('fileSelected', handleSidebarFileSelected as EventListener);
+
+    return () => {
+      window.removeEventListener('fileSelected', handleSidebarFileSelected as EventListener);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!pendingSidebarSelection) {
+      return;
     }
-  };
 
-  const handleFileSelected = (file: File) => {
-    setCurrentFile(file);
-    // Add to storage when a new file is selected
-    const fileId = addFile(file);
-    console.log('New file added to storage:', fileId, file.name);
-  };
+    const runLoad = async () => {
+      if (!uploadRef.current) {
+        setPendingSidebarSelection(null);
+        return;
+      }
 
-  const handleUploadNew = () => {
-    // Clear current state to allow new upload
-    setCurrentFile(null);
-    setDetectionResult(null);
-    setUploadResult(null);
-    // Scroll to upload section
-    document.getElementById('upload-section')?.scrollIntoView({ behavior: 'smooth' });
-  };
+      try {
+        await uploadRef.current.loadFile(pendingSidebarSelection.file, {
+          source: pendingSidebarSelection.source,
+          storedFileId: pendingSidebarSelection.storedFileId,
+          skipInitialSave:
+            pendingSidebarSelection.skipInitialSave ?? pendingSidebarSelection.source === 'sidebar-stored'
+        });
+      } catch (error) {
+        console.error('Error loading file from sidebar:', error);
+      } finally {
+        setPendingSidebarSelection(null);
+      }
+    };
+
+    runLoad();
+  }, [pendingSidebarSelection]);
+
+  useEffect(() => {
+    if (!activeStoredFileId) {
+      return;
+    }
+
+    const stillExists = files.some((file) => file.id === activeStoredFileId);
+    if (!stillExists) {
+      uploadRef.current?.clear();
+      setActiveStoredFileId(null);
+    }
+  }, [files, activeStoredFileId]);
+
 
   return (
-    <SidebarProvider defaultOpen={false}>
-      <AppSidebar
-        storedFiles={storedFiles}
-        activeFileId={activeFileId}
-        onFileSelect={selectFile}
-        onFileDelete={removeFile}
-        onFileRename={renameFile}
-        onUploadNew={handleUploadNew}
-      />
-      <SidebarInset>
         <div className="min-h-screen bg-background">
           {/* Header with Sidebar Toggle */}
           <div className="flex items-center justify-between p-4 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 sticky top-0 z-50">
             <div className="flex items-center space-x-4">
-              <SidebarTrigger className="h-8 w-8" />
+              <div className="flex items-center">
+                {!open && fileCount > 0 && (
+                  <Badge variant="secondary" className="mr-2">
+                    {fileCount}
+                  </Badge>
+                )}
+                <SidebarTrigger className="h-8 w-8" />
+              </div>
               <div className="flex items-center space-x-2">
                 <img
                   src="/FluffyVisualizer.png"
                   alt="FluffyViz Logo"
-                  className="w-8 h-8 object-contain"
+                  className="w-8 h-8 object-contain rounded-md"
                 />
                 <h1 className="text-xl font-bold text-primary">FluffyViz</h1>
               </div>
             </div>
-            {storedFiles.length > 0 && (
-              <div className="text-sm text-muted-foreground">
-                {storedFiles.length} dataset{storedFiles.length !== 1 ? 's' : ''} stored
-              </div>
-            )}
           </div>
 
           {/* Hero Section */}
-          <section className="px-8 py-20 text-center">
+          <section className="px-8 py-20 text-center bg-primary/5">
             <div className="max-w-4xl mx-auto space-y-8">
               <div className="flex items-center justify-center space-x-4">
                 <img
                   src="/FluffyVisualizer.png"
                   alt="FluffyViz Logo"
-                  className="w-16 h-16 object-contain"
+                  className="w-16 h-16 object-contain rounded-md"
                 />
                 <h1 className="text-6xl font-bold text-primary">FluffyViz</h1>
               </div>
@@ -150,20 +145,19 @@ export default function Home() {
           <section id="upload-section" className="px-8 py-16 bg-muted/30">
             <div className="max-w-4xl mx-auto">
               <div className="text-center mb-12">
-                <h2 className="text-4xl font-bold mb-4">Get Started with Your Data</h2>
-                <p className="text-xl text-muted-foreground">
-                  Upload your conversational data and begin the FluffyViz workflow
+                <h2 className="text-4xl font-bold mb-4 text-primary">Get Started with Your Data</h2>
+                <p className="text-lg text-muted-foreground">
+                Upload your conversational data and begin the FluffyViz workflow. Our AI-powered analysis will transform your raw data into actionable insights.
                 </p>
               </div>
               <EnhancedUpload
+                ref={uploadRef}
                 onDataUploaded={handleDataUploaded}
                 onFormatDetected={handleFormatDetected}
                 onFileSelected={handleFileSelected}
-                initialDetectionResult={activeFile?.detectionResult}
-                initialPreviewData={activeFile?.previewData}
               />
 
-              {/* Upload Results - displayed immediately after upload */}
+              {/* Upload Results - displayed immediately after upload
               {uploadResult && (
                 <div className="mt-8">
                   <Card className="border-l-4 border-l-green-500">
@@ -222,12 +216,12 @@ export default function Home() {
                     </CardContent>
                   </Card>
                 </div>
-              )}
+              )} */}
             </div>
           </section>
 
       {/* Workflow Section */}
-      <section className="px-8 py-16">
+      <section className="px-8 py-16 bg-primary/5">
         <div className="max-w-6xl mx-auto">
           <h2 className="text-4xl font-bold text-center mb-12">Simple 4-Step Workflow</h2>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
@@ -312,6 +306,15 @@ export default function Home() {
         </div>
       </section>
         </div>
+  );
+}
+
+export default function Home() {
+  return (
+    <SidebarProvider defaultOpen={false}>
+      <AppSidebar />
+      <SidebarInset>
+        <HomeContent />
       </SidebarInset>
     </SidebarProvider>
   );

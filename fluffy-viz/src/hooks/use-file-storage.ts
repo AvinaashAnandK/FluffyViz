@@ -1,130 +1,235 @@
-"use client"
+import { useState, useEffect, useCallback } from 'react';
 
-import { useState, useEffect, useCallback } from 'react'
-import { StoredFile } from '@/components/app-sidebar'
+export interface StoredFile {
+  id: string;
+  name: string;
+  content: string;
+  format: string;
+  lastModified: number;
+  size: number;
+  mimeType: string;
+}
 
-const STORAGE_KEY = 'fluffy-viz-stored-files'
+const DB_NAME = 'FluffyVizDB';
+const DB_VERSION = 1;
+const STORE_NAME = 'files';
+
+class FileStorageDB {
+  private db: IDBDatabase | null = null;
+
+  async init(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(DB_NAME, DB_VERSION);
+
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        this.db = request.result;
+        resolve();
+      };
+
+      request.onupgradeneeded = (event) => {
+        const db = (event.target as IDBOpenDBRequest).result;
+        if (!db.objectStoreNames.contains(STORE_NAME)) {
+          const store = db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+          store.createIndex('name', 'name', { unique: false });
+          store.createIndex('lastModified', 'lastModified', { unique: false });
+        }
+      };
+    });
+  }
+
+  async getAllFiles(): Promise<StoredFile[]> {
+    if (!this.db) await this.init();
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction([STORE_NAME], 'readonly');
+      const store = transaction.objectStore(STORE_NAME);
+      const request = store.getAll();
+
+      request.onsuccess = () => {
+        const files = request.result.sort((a, b) => b.lastModified - a.lastModified);
+        resolve(files);
+      };
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  async addFile(file: StoredFile): Promise<void> {
+    if (!this.db) await this.init();
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction([STORE_NAME], 'readwrite');
+      const store = transaction.objectStore(STORE_NAME);
+      const request = store.add(file);
+
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  async updateFile(file: StoredFile): Promise<void> {
+    if (!this.db) await this.init();
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction([STORE_NAME], 'readwrite');
+      const store = transaction.objectStore(STORE_NAME);
+      const request = store.put(file);
+
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  async deleteFile(id: string): Promise<void> {
+    if (!this.db) await this.init();
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction([STORE_NAME], 'readwrite');
+      const store = transaction.objectStore(STORE_NAME);
+      const request = store.delete(id);
+
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  async clearAll(): Promise<void> {
+    if (!this.db) await this.init();
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction([STORE_NAME], 'readwrite');
+      const store = transaction.objectStore(STORE_NAME);
+      const request = store.clear();
+
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
+  }
+}
+
+const db = new FileStorageDB();
+
+// Global event system for synchronizing all hook instances
+const filesChangedEvent = 'filesStorageChanged';
+
+const notifyFilesChanged = () => {
+  window.dispatchEvent(new CustomEvent(filesChangedEvent));
+};
 
 export function useFileStorage() {
-  const [storedFiles, setStoredFiles] = useState<StoredFile[]>([])
-  const [activeFileId, setActiveFileId] = useState<string | null>(null)
+  const [files, setFiles] = useState<StoredFile[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  // Load files from localStorage on mount
-  useEffect(() => {
+  const loadFiles = useCallback(async () => {
     try {
-      const stored = localStorage.getItem(STORAGE_KEY)
-      if (stored) {
-        const files: StoredFile[] = JSON.parse(stored).map((file: any) => ({
-          ...file,
-          uploadedAt: new Date(file.uploadedAt)
-        }))
-        setStoredFiles(files)
+      const storedFiles = await db.getAllFiles();
+      setFiles(storedFiles);
+    } catch (error) {
+      console.error('Error loading files:', error);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-        // Set the most recent file as active if no active file is set
-        if (files.length > 0) {
-          setActiveFileId(files[0].id)
-        }
+  useEffect(() => {
+    loadFiles();
+
+    // Listen for changes from other hook instances
+    const handleFilesChanged = () => {
+      loadFiles();
+    };
+
+    window.addEventListener(filesChangedEvent, handleFilesChanged);
+
+    return () => {
+      window.removeEventListener(filesChangedEvent, handleFilesChanged);
+    };
+  }, [loadFiles]);
+
+  const saveFile = useCallback(async (
+    fileContent: string,
+    fileName: string,
+    format: string,
+    mimeType: string,
+    existingId?: string
+  ) => {
+    const id = existingId ?? `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const storedFile: StoredFile = {
+      id,
+      name: fileName,
+      content: fileContent,
+      format,
+      lastModified: Date.now(),
+      size: new Blob([fileContent]).size,
+      mimeType
+    };
+
+    try {
+      if (existingId) {
+        await db.updateFile(storedFile);
+      } else {
+        await db.addFile(storedFile);
       }
+      await loadFiles();
+      notifyFilesChanged(); // Notify all instances
+      return storedFile.id;
     } catch (error) {
-      console.error('Error loading stored files:', error)
+      console.error('Error saving file:', error);
+      throw error;
     }
-  }, [])
+  }, [loadFiles]);
 
-  // Save files to localStorage whenever storedFiles changes
-  useEffect(() => {
+  const renameFile = useCallback(async (id: string, newName: string) => {
+    const file = files.find(f => f.id === id);
+    if (!file) return;
+
+    const updatedFile = { ...file, name: newName, lastModified: Date.now() };
+
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(storedFiles))
+      await db.updateFile(updatedFile);
+      await loadFiles();
+      notifyFilesChanged(); // Notify all instances
     } catch (error) {
-      console.error('Error saving files to storage:', error)
+      console.error('Error renaming file:', error);
+      throw error;
     }
-  }, [storedFiles])
+  }, [files, loadFiles]);
 
-  const addFile = useCallback((
-    file: File,
-    detectionResult?: any,
-    previewData?: any[],
-    selectedFormat?: string
-  ) => {
-    const newStoredFile: StoredFile = {
-      id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      name: file.name,
-      size: file.size,
-      type: file.type,
-      uploadedAt: new Date(),
-      detectionResult,
-      previewData,
-      selectedFormat
+  const deleteFile = useCallback(async (id: string) => {
+    try {
+      await db.deleteFile(id);
+      await loadFiles();
+      notifyFilesChanged(); // Notify all instances
+    } catch (error) {
+      console.error('Error deleting file:', error);
+      throw error;
     }
+  }, [loadFiles]);
 
-    setStoredFiles(prev => [newStoredFile, ...prev])
-    setActiveFileId(newStoredFile.id)
-
-    return newStoredFile.id
-  }, [])
-
-  const removeFile = useCallback((fileId: string) => {
-    setStoredFiles(prev => prev.filter(f => f.id !== fileId))
-
-    // If the active file was deleted, set the next available file as active
-    if (activeFileId === fileId) {
-      setStoredFiles(current => {
-        const remainingFiles = current.filter(f => f.id !== fileId)
-        if (remainingFiles.length > 0) {
-          setActiveFileId(remainingFiles[0].id)
-        } else {
-          setActiveFileId(null)
-        }
-        return remainingFiles
-      })
+  const clearAllFiles = useCallback(async () => {
+    try {
+      await db.clearAll();
+      await loadFiles();
+      notifyFilesChanged(); // Notify all instances
+    } catch (error) {
+      console.error('Error clearing files:', error);
+      throw error;
     }
-  }, [activeFileId])
+  }, [loadFiles]);
 
-  const getActiveFile = useCallback(() => {
-    return storedFiles.find(f => f.id === activeFileId) || null
-  }, [storedFiles, activeFileId])
-
-  const selectFile = useCallback((fileId: string) => {
-    setActiveFileId(fileId)
-  }, [])
-
-  const updateFileData = useCallback((
-    fileId: string,
-    updates: Partial<Pick<StoredFile, 'detectionResult' | 'previewData' | 'selectedFormat'>>
-  ) => {
-    setStoredFiles(prev =>
-      prev.map(file =>
-        file.id === fileId
-          ? { ...file, ...updates }
-          : file
-      )
-    )
-  }, [])
-
-  const renameFile = useCallback((fileId: string, newName: string) => {
-    setStoredFiles(prev =>
-      prev.map(file =>
-        file.id === fileId
-          ? { ...file, name: newName }
-          : file
-      )
-    )
-  }, [])
-
-  const clearAllFiles = useCallback(() => {
-    setStoredFiles([])
-    setActiveFileId(null)
-    localStorage.removeItem(STORAGE_KEY)
-  }, [])
+  const getFile = useCallback((id: string) => {
+    return files.find(f => f.id === id);
+  }, [files]);
 
   return {
-    storedFiles,
-    activeFileId,
-    activeFile: getActiveFile(),
-    addFile,
-    removeFile,
-    selectFile,
-    updateFileData,
+    files,
+    fileCount: files.length,
+    loading,
+    saveFile,
     renameFile,
-    clearAllFiles
-  }
+    deleteFile,
+    clearAllFiles,
+    getFile,
+    refreshFiles: loadFiles
+  };
 }

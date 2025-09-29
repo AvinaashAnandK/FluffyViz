@@ -25,9 +25,9 @@ fluffy-viz/
 │   │   └── style-guide/page.tsx  # Comprehensive design system
 │   ├── components/
 │   │   ├── ui/                   # Shadcn base components
-│   │   ├── file-upload.tsx       # Main upload component
-│   │   ├── workflow-breadcrumb.tsx # Navigation components
-│   │   └── ui/breadcrumb.tsx     # Base breadcrumb component
+│   │   ├── enhanced-upload.tsx   # Primary upload + processing workflow
+│   │   ├── app-sidebar.tsx       # Agent dataset management sidebar
+│   │   └── workflow-breadcrumb.tsx # Navigation components
 │   └── lib/
 │       └── utils.ts              # Utility functions
 ├── public/
@@ -70,7 +70,8 @@ Comprehensive design system located at `/style-guide` includes:
    - Professional messaging: "Analyze, enrich, expand your data"
    - Supports: CSV, JSON, JSONL, TXT
    - Drag & drop functionality with visual feedback
-   - File dismissal with X button (no persistence) ✅
+   - Files persist in IndexedDB-backed storage and reappear in sidebar lists
+   - File dismissal with X button resets detection state for current session ✅
    - Style guide aligned button text: "Drop or click to import a file" ✅
 
 3. **Workflow Section**
@@ -109,11 +110,12 @@ Comprehensive design system located at `/style-guide` includes:
 ## File Upload Component Details
 
 ### Main Features
-- Drag and drop interface with visual feedback
-- File type validation (CSV, JSON, JSONL, TXT)
-- File size display and status indicators
-- Error handling and user feedback
-- Multiple upload states (empty, active, selected)
+- Drag and drop interface with visual feedback and keyboard support
+- File type validation (CSV, JSON, JSONL, TXT) with helpful errors
+- File size display, status indicators, and progress feedback
+- IndexedDB persistence via `useFileStorage` hook (auto-save + manual save)
+- Programmatic control through `EnhancedUploadHandle` for sidebar integration
+- Multiple upload states (empty, active, selected, processing)
 
 ### Removed Features (for simplification)
 - Dataset description textarea
@@ -121,8 +123,8 @@ Comprehensive design system located at `/style-guide` includes:
 - AI analysis description feature
 
 ### Component Variants
-- `FileUploadArea` - Full-featured main component
-- `CompactFileUpload` - Minimal version for constrained spaces
+- `EnhancedUpload` - Full-featured main component used across the app and style guide
+- Sidebar trigger uses the same component through an imperative ref for seamless reuse
 
 ## Recent Development Work (2025-01-28)
 
@@ -169,6 +171,40 @@ const removeFile = useCallback(() => {
   setSelectedFormat('');
   setFieldMappings([]);
 }, []);
+```
+
+## Recent Development Work (2025-02-05)
+
+### ✅ Completed Tasks - Agent Dataset Persistence & Sidebar Experience
+**Uncommitted prior to this update** - Batched changes ready for commit
+
+#### 1. **Browser Storage & Synchronisation**
+- Implemented IndexedDB-backed storage (`FluffyVizDB`/`files` store) via `useFileStorage`
+- Added `saveFile`, `renameFile`, `deleteFile`, and `clearAllFiles` utilities with global change events
+- Storage records keep content, MIME type, format, size, and `lastModified` timestamps for sidebar display
+
+#### 2. **EnhancedUpload Refactor**
+- Converted component to `forwardRef` exposing `loadFile` and `clear` methods for sidebar-driven flows
+- Auto-saves newly detected files (unless explicitly skipped) and reuses stored ids when reprocessing
+- Improved drag feedback, progress handling, and state resets when the underlying dataset is removed
+
+#### 3. **Agent Datasets Sidebar**
+- Introduced dedicated sidebar section with dataset counter, upload dropzone, and per-file metadata cards
+- Each entry displays name, format badge, size, relative `lastModified`, and quick actions (rename + delete)
+- Added "Delete All Files" call-to-action with confirmation dialog and integrated `clearAllFiles`
+- Sidebar uploads emit rich `FileSelectionEventDetail` objects to drive the central uploader without duplication
+
+#### 4. **Global UI Feedback**
+- Header counter mirrors total stored files when sidebar is closed; hidden while sidebar is open to avoid duplication
+- Selecting stored datasets scrolls to the upload section, loads the file, and tracks the active stored id so that deleting it clears the UI
+
+```typescript
+export interface FileSelectionEventDetail {
+  file: File;
+  source: 'main-upload' | 'sidebar-upload' | 'sidebar-stored';
+  storedFileId?: string;
+  skipInitialSave?: boolean;
+}
 ```
 
 ## Git History
@@ -232,22 +268,139 @@ npm run dev
 # Style guide: http://localhost:3000/style-guide
 ```
 
-## Next Development Phase: Sidebar Implementation 🚧
+## ✅ COMPLETED: Sidebar Implementation Sprint (2025-01-29)
 
-### Upcoming Tasks (Ultrathink Priority)
-Based on user directive, next developer should implement:
+### **Commit: 9261f9a** - "Implement comprehensive sidebar with file storage and dataset management"
 
-1. **Sidebar Component** - Inspired by shadcn dashboard blocks
-2. **File Management** - Local storage of uploaded datasets
-3. **Dataset Switching** - Toggle between multiple agent datasets
-4. **Custom Styling** - Background color: `#D1CCDC`
-5. **Testing Protocol** - Test upload functionality with sample data files
+#### 1. **Sidebar Component Implementation**
+- Successfully implemented collapsible sidebar inspired by shadcn dashboard blocks
+- Custom styling with `#D1CCDC` background color as requested
+- Responsive design with proper mobile considerations
+- Integrated with SidebarProvider from shadcn/ui components
 
-### Reference Material
-- Shadcn Dashboard Blocks: https://ui.shadcn.com/blocks
-- Sample Data: Located in `/public/sample-data/` directory
-- Testing: Use Chrome MCP and console logs for validation
+#### 2. **File Storage & Management System**
+- **Local Storage Hook** (`use-file-storage.ts`):
+  - Persistent storage of uploaded files using localStorage
+  - Automatic state management for active file selection
+  - File metadata storage (name, size, type, upload date)
+  - Format detection results and preview data persistence
+
+- **File Management Features**:
+  - Upload new files via sidebar button
+  - Switch between multiple uploaded datasets
+  - File renaming with prompt interface
+  - Individual file deletion
+  - Bulk "Delete All Files" functionality
+  - Visual file type indicators (CSV, JSON, JSONL, TXT)
+  - File size and upload date display
+  - Active file highlighting with badges
+
+#### 3. **Enhanced Upload Component Integration**
+- Modified `enhanced-upload.tsx` to support initial data loading
+- Added `onFileSelected` callback for storage integration
+- Support for `initialDetectionResult` and `initialPreviewData` props
+- Proper state management when switching between stored files
+- Non-persistent behavior maintained (clearing all data when file dismissed)
+
+#### 4. **Main Page Architecture Updates**
+- Integrated SidebarProvider and SidebarInset layout
+- Added header with sidebar toggle and dataset counter
+- Enhanced state management for active file handling
+- Proper coordination between upload component and sidebar state
+- Upload results display immediately after processing
+
+#### 5. **TypeScript Integration**
+- Comprehensive `StoredFile` interface with all required fields
+- Proper typing for detection results and preview data
+- Type-safe file management operations
+- Export of interfaces for reuse across components
+
+### Technical Implementation Details
+
+#### File Storage Hook Features
+```typescript
+// Key functionality:
+const {
+  storedFiles,        // Array of all stored files
+  activeFileId,       // Currently selected file ID
+  activeFile,         // Currently selected file object
+  addFile,           // Add new file to storage
+  removeFile,        // Delete file from storage
+  selectFile,        // Switch active file
+  updateFileData,    // Update file metadata
+  renameFile,        // Rename stored file
+  clearAllFiles      // Clear all storage
+} = useFileStorage();
+```
+
+#### Sidebar Component Architecture
+- File list with visual hierarchy
+- File type icons (Database for CSV, Code2 for JSON/JSONL, FileText for TXT)
+- Format badges showing detected data format
+- Action buttons for rename and delete
+- Upload new file button at top
+- Delete all files button at bottom
+- Disabled "Configure LLM Provider" placeholder for future enhancement
+
+#### State Management Flow
+1. **File Upload**: New files added to storage automatically
+2. **File Selection**: Clicking sidebar file loads its data into upload component
+3. **Format Detection**: Results saved to storage and restored when file reselected
+4. **Data Processing**: Preview data and processing results persist in storage
+5. **File Switching**: Clean transitions between datasets without data loss
+
+### Testing Completed
+- Used Chrome DevTools MCP for UI validation ✅
+- Tested with sample data files from `/public/sample-data/` ✅
+- Verified localStorage persistence across browser sessions ✅
+- Confirmed file deletion and renaming functionality ✅
+- Validated format detection and preview data storage ✅
+
+### Files Created/Modified
+- **New Files**:
+  - `fluffy-viz/src/components/app-sidebar.tsx` - Main sidebar component
+  - `fluffy-viz/src/hooks/use-file-storage.ts` - Storage management hook
+  - Sample data files moved to root level for testing
+
+- **Modified Files**:
+  - `fluffy-viz/src/app/page.tsx` - Integrated sidebar and state management
+  - `fluffy-viz/src/components/enhanced-upload.tsx` - Added storage integration
+  - `ProjectDetails/development-context.md` - Updated documentation
+
+### Known Technical Details
+- **Persistence**: IndexedDB (`FluffyVizDB`, store `files`) accessed via `useFileStorage`
+- **File ID Generation**: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+- **State Sync**: Custom `filesStorageChanged` event keeps all hook instances in sync
+- **Sidebar Styling**: Background `#D1CCDC`, secondary badge for counts
+- **Format Badges**: `TURN LEVEL`, `ARIZE`, `LANGFUSE`, `LANGSMITH`, `MESSAGE CENTRIC`
 
 ---
-*Last Updated: 2025-01-28*
-*Context prepared for sidebar implementation phase*
+
+## Next Development Phase: Data Processing & Analysis 🚀
+
+### Immediate Next Steps
+With the sidebar and file management system complete, the next developer should focus on:
+
+1. **Backend Integration** - Connect upload processing to actual data transformation services
+2. **Workflow Navigation** - Implement routing between the 4-step process (Upload → Augment → Process → Visualize)
+3. **Data Augmentation UI** - Build interface for adding sentiment, topics, and custom analysis
+4. **Visualization Components** - Implement the chart components from style guide
+5. **Export Functionality** - Connect to external tools like Embedding Atlas
+
+### Current State Summary
+- ✅ **Upload System**: Fully functional with drag & drop, format detection, and file management
+- ✅ **Storage System**: Complete local storage with multi-file support and persistence
+- ✅ **UI Framework**: Comprehensive style guide and component library
+- ✅ **Sidebar Navigation**: Professional dataset management interface
+- 🔄 **Data Processing**: Ready for backend integration
+- 🔄 **Workflow Steps**: Components exist but need routing implementation
+- 🔄 **Data Visualization**: Chart components available but not connected
+
+### Sample Data Available
+- `sample-snowglobe-csv.csv` - For CSV format testing
+- `sample-snowglobe-json.json` - For JSON format testing
+- Located in project root for easy testing access
+
+---
+*Last Updated: 2025-02-05*
+*Context prepared for agent dataset persistence and upcoming data processing work*

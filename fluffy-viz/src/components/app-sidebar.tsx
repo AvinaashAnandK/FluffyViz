@@ -1,224 +1,316 @@
 "use client"
 
-import React from "react"
-import { File, Upload, ChevronRight, Trash2, FileText, Database, Code2, Edit2 } from "lucide-react"
-
+import React, { useState, useCallback } from "react"
 import {
   Sidebar,
   SidebarContent,
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarGroupLabel,
-  SidebarHeader,
-  SidebarMenu,
-  SidebarMenuItem,
-  SidebarMenuButton,
-  SidebarMenuAction,
   SidebarRail,
+  SidebarGroup,
+  SidebarGroupLabel,
+  SidebarGroupContent,
 } from "@/components/ui/sidebar"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import {
+  Upload as UploadIcon,
+  Trash2,
+  Edit
+} from "lucide-react"
+import { useFileStorage, StoredFile } from "@/hooks/use-file-storage"
+import { formatDistanceToNow } from "date-fns"
+import { FileSelectionEventDetail } from "@/types/file-storage"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import { cn } from "@/lib/utils"
 
-// Types for stored file data
-export interface StoredFile {
-  id: string
-  name: string
-  size: number
-  type: string
-  uploadedAt: Date
-  detectionResult?: any
-  previewData?: any[]
-  selectedFormat?: string
-}
+export function AppSidebar() {
+  const { files, fileCount, deleteFile, clearAllFiles, renameFile } = useFileStorage()
+  const [deleteAllDialogOpen, setDeleteAllDialogOpen] = useState(false)
+  const [renameDialogOpen, setRenameDialogOpen] = useState(false)
+  const [fileToRename, setFileToRename] = useState<StoredFile | null>(null)
+  const [newFileName, setNewFileName] = useState("")
+  const [dragActive, setDragActive] = useState(false)
 
-interface AppSidebarProps {
-  storedFiles: StoredFile[]
-  activeFileId: string | null
-  onFileSelect: (fileId: string) => void
-  onFileDelete: (fileId: string) => void
-  onFileRename: (fileId: string, newName: string) => void
-  onUploadNew: () => void
-}
+  const emitFileSelected = useCallback((detail: FileSelectionEventDetail) => {
+    const event = new CustomEvent<FileSelectionEventDetail>('fileSelected', { detail })
+    window.dispatchEvent(event)
+  }, [])
 
-export function AppSidebar({
-  storedFiles,
-  activeFileId,
-  onFileSelect,
-  onFileDelete,
-  onFileRename,
-  onUploadNew
-}: AppSidebarProps) {
-  const getFileIcon = (fileName: string) => {
-    const extension = fileName.split('.').pop()?.toLowerCase()
-    switch (extension) {
-      case 'csv':
-        return <Database className="h-4 w-4 text-green-600" />
-      case 'json':
-      case 'jsonl':
-        return <Code2 className="h-4 w-4 text-blue-600" />
-      case 'txt':
-        return <FileText className="h-4 w-4 text-gray-600" />
-      default:
-        return <File className="h-4 w-4 text-gray-600" />
+  const handleDrag = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (e.type === 'dragenter' || e.type === 'dragover') {
+      setDragActive(true)
+    } else if (e.type === 'dragleave') {
+      setDragActive(false)
+    }
+  }, [])
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setDragActive(false)
+
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      emitFileSelected({
+        file: e.dataTransfer.files[0],
+        source: 'sidebar-upload'
+      })
+    }
+  }, [emitFileSelected])
+
+  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      emitFileSelected({
+        file: e.target.files[0],
+        source: 'sidebar-upload'
+      })
     }
   }
 
-  const formatFileSize = (bytes: number) => {
-    return `${(bytes / 1024).toFixed(1)} KB`
+  const handleFileClick = (file: StoredFile) => {
+    // Create a File object from the stored content
+    const blob = new Blob([file.content], { type: file.mimeType })
+    const fileObject = new File([blob], file.name, {
+      type: file.mimeType,
+      lastModified: file.lastModified
+    })
+    emitFileSelected({
+      file: fileObject,
+      source: 'sidebar-stored',
+      storedFileId: file.id,
+      skipInitialSave: true
+    })
   }
 
-  const formatDate = (date: Date) => {
-    return new Intl.DateTimeFormat('en-US', {
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    }).format(new Date(date))
+  const handleRename = () => {
+    if (fileToRename && newFileName.trim()) {
+      renameFile(fileToRename.id, newFileName.trim())
+      setRenameDialogOpen(false)
+      setFileToRename(null)
+      setNewFileName("")
+    }
+  }
+
+  const formatFileSize = (size: number) => {
+    if (size < 1024) return `${size} B`
+    if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
+    return `${(size / (1024 * 1024)).toFixed(1)} MB`
+  }
+
+  const getFormatBadge = (format: string) => {
+    const formatMap: { [key: string]: string } = {
+      'message-centric': 'MESSAGE CENTRIC',
+      'langfuse': 'LANGFUSE',
+      'langsmith': 'LANGSMITH',
+      'arize': 'ARIZE',
+      'turn-level': 'TURN LEVEL'
+    }
+    return formatMap[format] || format.toUpperCase()
   }
 
   return (
-    <Sidebar
-      side="left"
-      className="border-r"
-      style={{ backgroundColor: '#D1CCDC' }}
-    >
-      <SidebarHeader className="px-4 py-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-lg font-semibold text-gray-800">Agent Datasets</h2>
-            <p className="text-sm text-gray-600">
-              {storedFiles.length} {storedFiles.length === 1 ? 'file' : 'files'} uploaded
-            </p>
-          </div>
-        </div>
-        <Button
-          onClick={onUploadNew}
-          className="w-full mt-4 bg-primary hover:bg-primary/90"
-          size="sm"
-        >
-          <Upload className="h-4 w-4 mr-2" />
-          Upload New File
-        </Button>
-      </SidebarHeader>
-
-      <SidebarContent className="flex flex-col">
-        <SidebarGroup className="flex-1 min-h-0">
-          <SidebarGroupLabel>Uploaded Files</SidebarGroupLabel>
-          <SidebarGroupContent className="flex-1 min-h-0">
-            {storedFiles.length === 0 ? (
-              <div className="px-4 py-8 text-center text-gray-500">
-                <File className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                <p className="text-sm">No files uploaded yet</p>
-                <p className="text-xs text-gray-400 mt-1">
-                  Upload a file to get started
-                </p>
+    <>
+      <Sidebar
+        side="left"
+        className="border-r"
+        style={{ backgroundColor: '#D1CCDC' }}
+      >
+        <SidebarContent className="flex flex-col justify-between min-h-full">
+          {/* Agent Datasets Section */}
+          <SidebarGroup className="flex-1">
+            <SidebarGroupLabel className="text-lg font-semibold px-4 py-3 flex items-center justify-between">
+              <span>Agent Datasets</span>
+              <Badge variant="secondary" className="ml-2">
+                {fileCount}
+              </Badge>
+            </SidebarGroupLabel>
+            <SidebarGroupContent className="p-4 space-y-4">
+              {/* Upload Button */}
+              <div
+                className={cn(
+                  "border-2 border-dashed rounded-lg py-4 px-4 text-center transition-all duration-200 cursor-pointer",
+                  dragActive ? 'border-primary bg-primary/10' : 'border-neutral-300 hover:border-primary hover:bg-primary/5'
+                )}
+                onDragEnter={handleDrag}
+                onDragLeave={handleDrag}
+                onDragOver={handleDrag}
+                onDrop={handleDrop}
+                onClick={() => document.getElementById('sidebar-file-upload')?.click()}
+              >
+                <div className="flex items-center justify-center text-sm font-medium">
+                  <UploadIcon className="h-4 w-4 mr-2" />
+                  Drop or click to import a file
+                </div>
+                <input
+                  type="file"
+                  accept=".csv,.json,.jsonl,.txt"
+                  onChange={handleFileInputChange}
+                  className="hidden"
+                  id="sidebar-file-upload"
+                />
               </div>
-            ) : (
-              <div className="flex flex-col h-full min-h-0">
-                <div className="flex-1 overflow-y-auto min-h-0">
-                  <SidebarMenu>
-                    {storedFiles.map((file) => (
-                      <SidebarMenuItem key={file.id}>
-                        <SidebarMenuButton
-                          onClick={() => onFileSelect(file.id)}
-                          isActive={activeFileId === file.id}
-                          className="flex items-center justify-between w-full p-3 rounded-lg hover:bg-white/50 transition-colors"
-                        >
-                          <div className="flex items-start space-x-3 flex-1 min-w-0">
-                            <div className="flex-shrink-0 mt-0.5">
-                              {getFileIcon(file.name)}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center space-x-2">
-                                <p className="text-sm font-medium text-gray-800 truncate">
-                                  {file.name}
-                                </p>
-                                {activeFileId === file.id && (
-                                  <Badge variant="secondary" className="text-xs">
-                                    Active
-                                  </Badge>
-                                )}
-                              </div>
-                              <div className="flex items-center space-x-2 mt-1">
-                                <Badge variant="outline" className="text-xs">
-                                  {formatFileSize(file.size)}
-                                </Badge>
-                                <span className="text-xs text-gray-500">
-                                  {formatDate(file.uploadedAt)}
-                                </span>
-                              </div>
-                              {file.selectedFormat && (
-                                <Badge variant="default" className="text-xs mt-1 bg-blue-100 text-blue-800">
-                                  {file.selectedFormat.replace('-', ' ').toUpperCase()}
-                                </Badge>
-                              )}
-                            </div>
+
+              {/* File List */}
+              {files.length > 0 && (
+                <div className="space-y-2">
+                  {files.map((file) => (
+                    <div
+                      key={file.id}
+                      className="bg-white rounded-lg p-3 border border-gray-200 hover:border-primary/50 transition-colors cursor-pointer"
+                      onClick={() => handleFileClick(file)}
+                    >
+                      <div className="flex items-start justify-between mb-2">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">{file.name}</p>
+                          <div className="flex items-center gap-2 mt-1">
+                            <Badge variant="outline" className="text-xs">
+                              {getFormatBadge(file.format)}
+                            </Badge>
+                            <span className="text-xs text-muted-foreground">
+                              {formatFileSize(file.size)}
+                            </span>
                           </div>
-                        </SidebarMenuButton>
-                        <div className="flex space-x-1">
-                          <SidebarMenuAction
+                          <p className="text-xs text-muted-foreground mt-1">
+                            {formatDistanceToNow(file.lastModified, { addSuffix: true })}
+                          </p>
+                        </div>
+                        <div className="flex gap-1 ml-2">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 w-7 p-0"
                             onClick={(e) => {
                               e.stopPropagation()
-                              const newName = prompt("Enter new file name:", file.name)
-                              if (newName && newName !== file.name) {
-                                onFileRename(file.id, newName)
-                              }
+                              setFileToRename(file)
+                              setNewFileName(file.name)
+                              setRenameDialogOpen(true)
                             }}
-                            className="h-6 w-6 p-0 text-gray-400 hover:text-blue-600"
                           >
-                            <Edit2 className="h-3 w-3" />
-                          </SidebarMenuAction>
-                          <SidebarMenuAction
+                            <Edit className="h-3 w-3" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 w-7 p-0 text-destructive hover:text-destructive"
                             onClick={(e) => {
                               e.stopPropagation()
-                              onFileDelete(file.id)
+                              deleteFile(file.id)
                             }}
-                            className="h-6 w-6 p-0 text-gray-400 hover:text-red-600"
                           >
                             <Trash2 className="h-3 w-3" />
-                          </SidebarMenuAction>
+                          </Button>
                         </div>
-                      </SidebarMenuItem>
-                    ))}
-                  </SidebarMenu>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              </div>
-            )}
-          </SidebarGroupContent>
-        </SidebarGroup>
-      </SidebarContent>
+              )}
 
-      {/* Delete All Files Button */}
-      {storedFiles.length > 0 && (
-        <div className="p-4 border-t border-border">
-          <Button
-            variant="outline"
-            size="sm"
-            className="w-full text-red-600 border-red-200 hover:bg-red-50"
-            onClick={() => {
-              if (confirm(`Delete all ${storedFiles.length} files? This action cannot be undone.`)) {
-                storedFiles.forEach(file => onFileDelete(file.id))
-              }
-            }}
-          >
-            <Trash2 className="h-4 w-4 mr-2" />
-            Delete All Files
-          </Button>
-        </div>
-      )}
+              {/* Delete All Button */}
+              {files.length > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full text-destructive hover:text-destructive"
+                  onClick={() => setDeleteAllDialogOpen(true)}
+                >
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Delete All Files
+                </Button>
+              )}
+            </SidebarGroupContent>
+          </SidebarGroup>
 
-      {/* Configure LLM Provider Button at Bottom */}
-      <div className="p-4 border-t border-border">
-        <Button
-          disabled
-          className="w-full bg-primary text-primary-foreground opacity-50 cursor-not-allowed"
-          size="sm"
-        >
-          Configure LLM Provider
-        </Button>
-      </div>
+          {/* Configure LLM Provider Button */}
+          <div className="p-4 border-t border-border">
+            <Button
+              disabled
+              className="w-full bg-primary text-primary-foreground opacity-50 cursor-not-allowed"
+              size="sm"
+            >
+              Configure LLM Provider
+            </Button>
+          </div>
+        </SidebarContent>
 
-      <SidebarRail />
-    </Sidebar>
+        <SidebarRail />
+      </Sidebar>
+
+      {/* Delete All Confirmation Dialog */}
+      <Dialog open={deleteAllDialogOpen} onOpenChange={setDeleteAllDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete All Files</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete all {fileCount} files? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setDeleteAllDialogOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                clearAllFiles()
+                setDeleteAllDialogOpen(false)
+              }}
+            >
+              Delete All
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Rename File Dialog */}
+      <Dialog open={renameDialogOpen} onOpenChange={setRenameDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Rename File</DialogTitle>
+            <DialogDescription>
+              Enter a new name for the file
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <Input
+              value={newFileName}
+              onChange={(e) => setNewFileName(e.target.value)}
+              placeholder="Enter new file name"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  handleRename()
+                }
+              }}
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setRenameDialogOpen(false)
+                setFileToRename(null)
+                setNewFileName("")
+              }}
+            >
+              Cancel
+            </Button>
+            <Button onClick={handleRename}>
+              Rename
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   )
 }

@@ -14,7 +14,7 @@ import { Badge } from "@/components/ui/badge"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { WorkflowBreadcrumb, CompactWorkflowBreadcrumb, VerticalWorkflowBreadcrumb } from "@/components/workflow-breadcrumb"
-import { FileUploadArea, CompactFileUpload } from "@/components/file-upload"
+import { EnhancedUpload } from "@/components/enhanced-upload"
 import {
   BarChart3,
   Database,
@@ -215,7 +215,7 @@ export default function StyleGuide() {
                 <div className="mt-4 p-4 border rounded-lg">
                   <p className="text-sm">
                     Current theme colors automatically adapt based on user preference or manual selection.
-                    The toggle persists the user's choice in localStorage.
+                    The toggle persists the user&apos;s choice in localStorage.
                   </p>
                 </div>
               </CardContent>
@@ -533,9 +533,9 @@ export default function StyleGuide() {
             <h3 className="text-xl font-medium">Primary Upload Interface</h3>
             <Card>
               <CardContent className="p-6">
-                <FileUploadArea
-                  onFileSelect={(file) => console.log('File selected:', file.name)}
-                  onDescriptionChange={(desc) => console.log('Description:', desc)}
+                <EnhancedUpload
+                  onDataUploaded={(data) => console.log('Data uploaded:', data)}
+                  onFormatDetected={(format) => console.log('Format detected:', format)}
                 />
               </CardContent>
             </Card>
@@ -547,8 +547,9 @@ export default function StyleGuide() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <Card>
                 <CardContent className="p-6">
-                  <CompactFileUpload
-                    onFileSelect={(file) => console.log('Compact file selected:', file.name)}
+                  <EnhancedUpload
+                    onDataUploaded={(data) => console.log('Data uploaded:', data)}
+                    onFormatDetected={(format) => console.log('Format detected:', format)}
                   />
                 </CardContent>
               </Card>
@@ -1056,7 +1057,7 @@ export default function StyleGuide() {
             </Card>
             <Card>
               <CardHeader>
-                <CardTitle>Don't</CardTitle>
+                <CardTitle>Don&apos;t</CardTitle>
               </CardHeader>
               <CardContent className="space-y-2">
                 <p>• Mix different button styles in the same context</p>
