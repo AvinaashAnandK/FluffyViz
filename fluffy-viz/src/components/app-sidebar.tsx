@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
+import { AIProviderConfigDemo } from "@/components/ai-provider-config-demo"
 
 export function AppSidebar() {
   const { files, fileCount, deleteFile, clearAllFiles, renameFile } = useFileStorage()
@@ -37,6 +38,7 @@ export function AppSidebar() {
   const [fileToRename, setFileToRename] = useState<StoredFile | null>(null)
   const [newFileName, setNewFileName] = useState("")
   const [dragActive, setDragActive] = useState(false)
+  const [providerDialogOpen, setProviderDialogOpen] = useState(false)
 
   const emitFileSelected = useCallback((detail: FileSelectionEventDetail) => {
     const event = new CustomEvent<FileSelectionEventDetail>('fileSelected', { detail })
@@ -232,9 +234,9 @@ export function AppSidebar() {
           {/* Configure LLM Provider Button */}
           <div className="p-4 border-t border-border">
             <Button
-              disabled
-              className="w-full bg-primary text-primary-foreground opacity-50 cursor-not-allowed"
+              className="w-full bg-primary text-primary-foreground"
               size="sm"
+              onClick={() => setProviderDialogOpen(true)}
             >
               Configure LLM Provider
             </Button>
@@ -307,6 +309,26 @@ export function AppSidebar() {
             </Button>
             <Button onClick={handleRename}>
               Rename
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Provider Configuration Dialog */}
+      <Dialog open={providerDialogOpen} onOpenChange={setProviderDialogOpen}>
+        <DialogContent className="sm:max-w-none w-[80vw] max-w-[80vw] h-[80vh] max-h-[80vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>Configure LLM Providers</DialogTitle>
+            <DialogDescription>
+            Decide which vendors power data augmentation, evaluation and visualization workflows across your agent datasets.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex-1 overflow-y-auto pr-1">
+            <AIProviderConfigDemo className="h-full" />
+          </div>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setProviderDialogOpen(false)}>
+              Done
             </Button>
           </DialogFooter>
         </DialogContent>

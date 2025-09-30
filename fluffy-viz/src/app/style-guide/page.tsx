@@ -15,6 +15,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { WorkflowBreadcrumb, CompactWorkflowBreadcrumb, VerticalWorkflowBreadcrumb } from "@/components/workflow-breadcrumb"
 import { EnhancedUpload } from "@/components/enhanced-upload"
+import { AIProviderConfigDemo } from "@/components/ai-provider-config-demo"
 import {
   BarChart3,
   Database,
@@ -330,6 +331,17 @@ export default function StyleGuide() {
               </CardContent>
             </Card>
           </div>
+        </section>
+
+        {/* AI Provider Configuration */}
+        <section className="space-y-6">
+          <div className="space-y-2">
+            <h2 className="text-3xl font-semibold">AI Provider Configuration</h2>
+            <p className="max-w-3xl text-sm text-muted-foreground">
+              Interactive walkthrough for managing API keys, feature flags, and supported capabilities across the vendors that power FluffyViz enrichment.
+            </p>
+          </div>
+          <AIProviderConfigDemo />
         </section>
 
         {/* Data Tables */}

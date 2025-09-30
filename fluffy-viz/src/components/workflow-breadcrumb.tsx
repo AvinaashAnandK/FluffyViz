@@ -84,8 +84,7 @@ export function CompactWorkflowBreadcrumb({ steps, className }: WorkflowBreadcru
               className={cn(
                 "flex h-6 w-6 items-center justify-center rounded-full text-xs font-medium transition-colors",
                 {
-                  "bg-primary text-primary-foreground": step.status === "completed",
-                  "bg-primary text-primary-foreground": step.status === "current",
+                  "bg-primary text-primary-foreground": step.status === "completed" || step.status === "current",
                   "bg-muted text-muted-foreground": step.status === "pending",
                 }
               )}
