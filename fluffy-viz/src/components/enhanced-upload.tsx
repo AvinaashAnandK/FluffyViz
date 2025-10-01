@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useCallback, useEffect, useImperativeHandle, forwardRef } from 'react';
+import { useRouter } from 'next/navigation';
 import { Upload as UploadIcon, FileText, AlertCircle, CheckCircle, Database, Sparkles, X } from 'lucide-react';
 import Papa from 'papaparse';
 
@@ -52,6 +53,7 @@ export const EnhancedUpload = forwardRef<EnhancedUploadHandle, UploadProps>(({
   initialDetectionResult,
   initialPreviewData
 }, ref) => {
+  const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [processing, setProcessing] = useState(false);
@@ -298,6 +300,13 @@ export const EnhancedUpload = forwardRef<EnhancedUploadHandle, UploadProps>(({
       onDataUploaded(result);
 
       setProgress(100);
+
+      // Redirect to spreadsheet editor after successful upload
+      if (persistedId) {
+        setTimeout(() => {
+          router.push(`/edit/${persistedId}`);
+        }, 500);
+      }
     } catch (error) {
       console.error('Error processing data:', error);
       setError('Error processing file. Please try again.');
