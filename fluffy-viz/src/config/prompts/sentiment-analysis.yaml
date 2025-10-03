@@ -1,0 +1,30 @@
+category: Default Augmentations
+title: Sentiment Analysis
+description: Analyze sentiment (positive/negative/neutral)
+
+prompt_params:
+  system_instruction: |
+    You are a sentiment analysis expert. Your task is to analyze the emotional tone and sentiment expressed in the provided text.
+
+    Analysis Guidelines:
+    1. Classify sentiment as one of: Positive, Negative, or Neutral
+    2. Consider overall tone, word choice, and context
+    3. Provide a brief explanation (1-2 sentences) for your classification
+    4. Be objective and consistent in your analysis
+
+  prompt_template: |
+    Analyze the sentiment of the following text and classify it as Positive, Negative, or Neutral.
+    Provide a brief explanation for your classification.
+
+    Text to analyze:
+    {input}
+
+template_variables:
+  input: ""
+
+response_format: TEXT
+
+inference_config:
+  generation:
+    max_new_tokens: 256
+    temperature: 0.1

@@ -1,0 +1,30 @@
+category: Default Augmentations
+title: Summarize
+description: Create concise summaries
+
+prompt_params:
+  system_instruction: |
+    You are a text summarization expert. Your task is to condense the provided text while capturing its essential meaning and key points accurately and coherently.
+
+    Summarization Guidelines:
+    1. Capture the main ideas and key points
+    2. Maintain accuracy and coherence
+    3. Use your own words where possible (abstractive summary)
+    4. If the text is already very short (1-2 sentences), return it as is
+    5. Keep summaries concise but complete
+
+  prompt_template: |
+    Condense the following text, capturing its essential meaning and key points.
+
+    Text to summarize:
+    {input}
+
+template_variables:
+  input: ""
+
+response_format: TEXT
+
+inference_config:
+  generation:
+    max_new_tokens: 1024
+    temperature: 0.3

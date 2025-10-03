@@ -1,0 +1,31 @@
+category: Default Augmentations
+title: Translate
+description: Translate text to different languages
+
+prompt_params:
+  system_instruction: |
+    You are a professional translator. Your task is to translate text accurately while maintaining the original meaning, context, and formatting.
+
+    Translation Guidelines:
+    1. Ensure grammatical accuracy and natural, human-like phrasing
+    2. Maintain original meaning and context
+    3. Preserve formatting (line breaks, punctuation, etc.)
+    4. Adapt cultural references appropriately where necessary
+    5. Review translation carefully for quality
+
+  prompt_template: |
+    Translate the following text to {language}.
+
+    Original text:
+    {input}
+
+template_variables:
+  language: English
+  input: ""
+
+response_format: TEXT
+
+inference_config:
+  generation:
+    max_new_tokens: 2048
+    temperature: 0.3

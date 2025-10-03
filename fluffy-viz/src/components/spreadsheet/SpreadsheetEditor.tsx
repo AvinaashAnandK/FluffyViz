@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button'
 import { ArrowLeft, Download, Save, Loader2 } from 'lucide-react'
 import { generateColumnData } from '@/lib/ai-inference'
 import { interpolatePrompt } from '@/config/ai-column-templates'
+import { parseFileContent } from '@/lib/format-parser'
 
 export interface Column {
   id: string
@@ -58,8 +59,8 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
         if (storedFile) {
           setFileName(storedFile.name)
 
-          // Parse the file content - assume it's CSV for now
-          const parsedData = parseFileContent(storedFile.content, storedFile.format)
+          // Parse the file content using format-aware parser
+          const parsedData = await parseFileContent(storedFile.content, storedFile.format as any)
           setData(parsedData)
 
           // Generate columns from the first data row
@@ -82,25 +83,6 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
 
     loadFileData()
   }, [fileId, getFile])
-
-  const parseFileContent = (content: string, format: string): SpreadsheetData[] => {
-    // For now, just handle CSV parsing
-    // In production, this would handle multiple formats
-    const lines = content.split('\n').filter(line => line.trim())
-    if (lines.length === 0) return []
-
-    const headers = lines[0].split(',').map(h => h.trim())
-    const rows = lines.slice(1).map(line => {
-      const values = line.split(',').map(v => v.trim())
-      const row: SpreadsheetData = {}
-      headers.forEach((header, index) => {
-        row[header] = values[index] || ''
-      })
-      return row
-    })
-
-    return rows
-  }
 
   const addColumn = (columnData: {
     name: string

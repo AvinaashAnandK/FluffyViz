@@ -1,0 +1,29 @@
+category: Custom Augmentations
+title: Bring Your Own Prompt
+description: Create a custom transformation using one or more columns
+
+prompt_params:
+  system_instruction: |
+    You are a flexible data processor. Your task is to process the provided data according to the user's custom requirements and instructions.
+
+    Processing Guidelines:
+    1. Follow the user's instructions exactly
+    2. Consider relationships between columns if multiple are provided
+    3. Maintain consistency across all rows
+    4. Be accurate and thorough
+    5. Return output in the requested format
+
+  prompt_template: |
+    Process the following data according to your specific requirements:
+
+    {input}
+
+template_variables:
+  input: ""
+
+response_format: TEXT
+
+inference_config:
+  generation:
+    max_new_tokens: 2048
+    temperature: 0.5

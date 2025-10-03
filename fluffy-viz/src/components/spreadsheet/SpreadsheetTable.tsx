@@ -1,9 +1,17 @@
 'use client'
 
 import { useState } from 'react'
-import { Plus, ChevronDown } from 'lucide-react'
+import { Plus } from 'lucide-react'
 import type { Column, SpreadsheetData } from './SpreadsheetEditor'
-import { COLUMN_TEMPLATES } from '@/config/ai-column-templates'
+import { getTemplateGroups } from '@/config/ai-column-templates'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+} from '@/components/ui/dropdown-menu'
 
 interface SpreadsheetTableProps {
   data: SpreadsheetData[]
@@ -13,8 +21,8 @@ interface SpreadsheetTableProps {
   onColumnTemplateSelect: (template: string) => void
 }
 
-// Templates are now loaded from ai-column-templates.ts
-const templatesList = Object.values(COLUMN_TEMPLATES)
+// Get template groups with hierarchy
+const templateGroups = getTemplateGroups()
 
 // Convert column index to Excel-style letter (A, B, C, etc.)
 function indexToLetter(index: number): string {
@@ -33,7 +41,6 @@ export function SpreadsheetTable({
   onCellChange,
   onColumnTemplateSelect
 }: SpreadsheetTableProps) {
-  const [showTemplateDropdown, setShowTemplateDropdown] = useState(false)
   const [editingCell, setEditingCell] = useState<{row: number, col: string} | null>(null)
   const [editValue, setEditValue] = useState('')
   const [selectedCell, setSelectedCell] = useState<{row: number, col: string} | null>(null)
@@ -110,7 +117,6 @@ export function SpreadsheetTable({
 
   const handleTemplateSelect = (template: string) => {
     onColumnTemplateSelect(template)
-    setShowTemplateDropdown(false)
     onAddColumn()
   }
 
@@ -120,33 +126,59 @@ export function SpreadsheetTable({
         <thead className="bg-muted sticky top-0">
           {/* Column letter headers (A, B, C, etc.) */}
           <tr>
-            <th className="w-10 h-10 border border-border bg-muted/50 text-muted-foreground text-sm font-normal">
+            <th className="w-16 h-12 border border-border bg-muted/50 text-muted-foreground text-sm font-normal">
               {/* Empty corner cell */}
             </th>
             {visibleColumns.map((column, index) => (
-              <th key={column.id} className="min-w-[142px] w-80 h-10 border border-border bg-muted text-muted-foreground text-sm font-normal relative">
+              <th key={column.id} className="min-w-[142px] w-80 h-12 border border-border bg-muted text-muted-foreground text-sm font-normal relative">
                 {indexToLetter(index)}
               </th>
             ))}
             {/* Add column header */}
-            <th className="min-w-[142px] w-80 h-10 border border-border bg-muted relative">
+            <th className="min-w-[142px] w-80 h-12 border border-border bg-muted relative">
               <div className="flex items-center justify-center h-full">
-                <div className="relative">
-                  <button
-                    onClick={() => setShowTemplateDropdown(!showTemplateDropdown)}
-                    className="p-2 hover:bg-accent hover:text-accent-foreground rounded-md transition-colors"
-                    title="Add column"
-                  >
-                    <Plus className="w-4 h-4 text-muted-foreground" />
-                  </button>
-
-                </div>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      className="p-2 hover:bg-accent hover:text-accent-foreground rounded-md transition-colors"
+                      title="Add column"
+                    >
+                      <Plus className="w-4 h-4 text-muted-foreground" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="min-w-[280px]">
+                    {templateGroups.map((group, groupIndex) => (
+                      <div key={group.heading}>
+                        <DropdownMenuLabel className="text-xs font-semibold uppercase text-purple-500">
+                          {group.heading}
+                        </DropdownMenuLabel>
+                        {group.templates.map((template) => (
+                          <DropdownMenuItem
+                            key={template.id}
+                            onClick={() => handleTemplateSelect(template.id)}
+                          >
+                            <div className="flex flex-col gap-1">
+                              <span className="font-medium">{template.name}</span>
+                              <span className="text-xs text-muted-foreground">
+                                {template.description}
+                              </span>
+                            </div>
+                          </DropdownMenuItem>
+                        ))}
+                        {groupIndex < templateGroups.length - 1 && <DropdownMenuSeparator />}
+                      </div>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
             </th>
           </tr>
 
           {/* Column name headers */}
           <tr>
+            <th className="w-16 border border-border bg-muted/50">
+              {/* Empty cell for row numbers */}
+            </th>
             {visibleColumns.map((column) => (
               <th key={`name-${column.id}`} className="border border-border bg-muted text-left">
                 <button className="w-full p-3 text-left hover:bg-accent hover:text-accent-foreground transition-colors">
@@ -165,8 +197,8 @@ export function SpreadsheetTable({
           {data.map((row, rowIndex) => (
             <tr key={rowIndex}>
               {/* Row number */}
-              <td className="w-10 h-24 border border-gray-300 bg-gray-50 text-center text-sm text-gray-600">
-                <button className="w-full h-full hover:bg-gray-100 transition-colors">
+              <td className="w-16 h-24 border  bg-gray-50 text-center text-sm text-gray-600">
+                <button className="w-12 h-full hover:bg-gray-100 transition-colors">
                   {rowIndex + 1}
                 </button>
               </td>
@@ -235,7 +267,7 @@ export function SpreadsheetTable({
           {/* Add some empty rows */}
           {[...Array(2)].map((_, index) => (
             <tr key={`empty-${index}`}>
-              <td className="w-10 h-24 border border-border bg-muted/30 text-center text-sm text-muted-foreground">
+              <td className="w-16 h-24 border border-border bg-muted/30 text-center text-sm text-muted-foreground">
                 <button className="w-full h-full hover:bg-accent hover:text-accent-foreground transition-colors">
                   {data.length + index + 1}
                 </button>
@@ -260,34 +292,6 @@ export function SpreadsheetTable({
         </tbody>
       </table>
 
-      {/* Dropdown positioned outside table */}
-      {showTemplateDropdown && (
-        <div className="fixed inset-0 z-50" onClick={() => setShowTemplateDropdown(false)}>
-          <div
-            className="absolute bg-card border border-border rounded-md shadow-xl min-w-[240px]"
-            style={{
-              top: '120px',
-              right: '20px'
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {templatesList.map((template) => (
-              <button
-                key={template.id}
-                onClick={() => handleTemplateSelect(template.id)}
-                className="block w-full px-4 py-2 text-left text-sm hover:bg-accent hover:text-accent-foreground first:rounded-t-md last:rounded-b-md"
-              >
-                <div className="flex items-center justify-between">
-                  <span>{template.name}</span>
-                </div>
-                <div className="text-xs text-muted-foreground mt-1">
-                  {template.description}
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   )
 }

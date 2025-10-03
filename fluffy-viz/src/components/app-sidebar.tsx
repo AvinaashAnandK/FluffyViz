@@ -45,6 +45,11 @@ export function AppSidebar() {
     window.dispatchEvent(event)
   }, [])
 
+  const emitFileDeleted = useCallback((fileId: string) => {
+    const event = new CustomEvent('fileDeleted', { detail: { fileId } })
+    window.dispatchEvent(event)
+  }, [])
+
   const handleDrag = useCallback((e: React.DragEvent) => {
     e.preventDefault()
     e.stopPropagation()
@@ -204,6 +209,7 @@ export function AppSidebar() {
                             className="h-7 w-7 p-0 text-destructive hover:text-destructive"
                             onClick={(e) => {
                               e.stopPropagation()
+                              emitFileDeleted(file.id)
                               deleteFile(file.id)
                             }}
                           >
@@ -265,6 +271,9 @@ export function AppSidebar() {
             <Button
               variant="destructive"
               onClick={() => {
+                // Emit event before clearing all files
+                const event = new CustomEvent('allFilesDeleted')
+                window.dispatchEvent(event)
                 clearAllFiles()
                 setDeleteAllDialogOpen(false)
               }}

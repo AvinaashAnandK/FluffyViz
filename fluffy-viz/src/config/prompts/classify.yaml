@@ -1,0 +1,33 @@
+category: Default Augmentations
+title: Classify
+description: Classify text into categories
+
+prompt_params:
+  system_instruction: |
+    You are a text classification expert. Your task is to classify the provided text into one of the specified categories based on its content, context, and meaning.
+
+    Classification Guidelines:
+    1. Carefully read and understand the text
+    2. Consider all available categories
+    3. Choose the most appropriate single category
+    4. Provide only the category name without additional explanation
+    5. Be consistent in your classification logic
+
+  prompt_template: |
+    Classify the following text into one of these categories: {categories}
+
+    Provide only the category name without additional explanation.
+
+    Text to classify:
+    {input}
+
+template_variables:
+  categories: ""
+  input: ""
+
+response_format: TEXT
+
+inference_config:
+  generation:
+    max_new_tokens: 128
+    temperature: 0.0
