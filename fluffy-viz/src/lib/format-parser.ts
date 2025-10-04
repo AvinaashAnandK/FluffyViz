@@ -21,6 +21,7 @@
 
 import Papa from 'papaparse'
 import { SupportedFormat } from '@/types'
+import { parserConfig } from '@/config/parser.config'
 
 export interface ParsedData {
   [key: string]: any
@@ -33,9 +34,14 @@ export interface FlattenOptions {
   prefix?: string
 }
 
+// Memoization cache for repeated flattening operations
+const flattenCache = new Map<string, Record<string, any>>();
+const CACHE_MAX_SIZE = 100;
+
 /**
  * Flattens a nested object into a single-level object with dot notation keys
  * Supports multiple strategies for handling arrays and nested structures
+ * Includes memoization for performance optimization
  */
 function flattenObject(
   obj: any,
@@ -43,16 +49,27 @@ function flattenObject(
   currentDepth = 0
 ): Record<string, any> {
   const {
-    maxDepth = 3,
+    maxDepth = parserConfig.maxFlattenDepth,
     arrayHandling = 'stringify',
     dateFormat = 'iso',
     prefix = ''
   } = options
 
+  // Generate cache key for memoization (only for root level)
+  if (currentDepth === 0 && typeof obj === 'object' && obj !== null) {
+    const cacheKey = JSON.stringify({ obj: obj, options });
+    if (flattenCache.has(cacheKey)) {
+      return flattenCache.get(cacheKey)!;
+    }
+  }
+
   const flattened: Record<string, any> = {}
 
   // If we've reached max depth, stringify the remaining object
   if (currentDepth >= maxDepth) {
+    if (parserConfig.showWarnings && currentDepth === maxDepth) {
+      console.warn(`Maximum flattening depth (${maxDepth}) reached. Remaining data will be stringified.`);
+    }
     return { [prefix || 'data']: JSON.stringify(obj) }
   }
 
@@ -80,21 +97,37 @@ function flattenObject(
       return { [prefix || 'array']: '[]' }
     }
 
+    // Apply array length limit from config
+    const effectiveArray = obj.length > parserConfig.maxArrayLength
+      ? obj.slice(0, parserConfig.maxArrayLength)
+      : obj;
+
+    if (obj.length > parserConfig.maxArrayLength && parserConfig.showWarnings) {
+      console.warn(
+        `Array length (${obj.length}) exceeds maximum (${parserConfig.maxArrayLength}). ` +
+        `Only first ${parserConfig.maxArrayLength} items will be processed.`
+      );
+    }
+
     // Check if array contains only primitives
-    const allPrimitives = obj.every(item =>
+    const allPrimitives = effectiveArray.every(item =>
       typeof item !== 'object' || item === null
     )
 
     if (allPrimitives) {
       // Join primitive arrays
-      return { [prefix || 'array']: obj.filter(v => v !== null && v !== undefined).join(', ') }
+      const joinedValue = effectiveArray.filter(v => v !== null && v !== undefined).join(', ');
+      return { [prefix || 'array']: joinedValue.length > parserConfig.maxStringLength
+        ? joinedValue.substring(0, parserConfig.maxStringLength) + '...'
+        : joinedValue
+      };
     }
 
     // For arrays of objects, handle based on strategy
-    if (arrayHandling === 'expand' && obj.length <= 5) {
+    if (arrayHandling === 'expand' && effectiveArray.length <= 5) {
       // Expand first few items as separate columns
       const expanded: Record<string, any> = {}
-      obj.slice(0, 5).forEach((item, index) => {
+      effectiveArray.slice(0, 5).forEach((item, index) => {
         const itemPrefix = prefix ? `${prefix}[${index}]` : `item_${index}`
         Object.assign(expanded, flattenObject(item, { ...options, prefix: itemPrefix }, currentDepth + 1))
       })
@@ -104,7 +137,11 @@ function flattenObject(
       return expanded
     } else {
       // Stringify complex arrays
-      return { [prefix || 'array']: JSON.stringify(obj) }
+      const stringified = JSON.stringify(effectiveArray);
+      return { [prefix || 'array']: stringified.length > parserConfig.maxStringLength
+        ? stringified.substring(0, parserConfig.maxStringLength) + '...'
+        : stringified
+      };
     }
   }
 
@@ -134,6 +171,21 @@ function flattenObject(
     } else {
       flattened[newKey] = value
     }
+  }
+
+  // Store in cache if this is a root-level call
+  if (currentDepth === 0 && typeof obj === 'object' && obj !== null) {
+    const cacheKey = JSON.stringify({ obj: obj, options });
+
+    // Implement LRU cache: remove oldest entry if cache is full
+    if (flattenCache.size >= CACHE_MAX_SIZE) {
+      const firstKey = flattenCache.keys().next().value;
+      if (firstKey !== undefined) {
+        flattenCache.delete(firstKey);
+      }
+    }
+
+    flattenCache.set(cacheKey, flattened);
   }
 
   return flattened

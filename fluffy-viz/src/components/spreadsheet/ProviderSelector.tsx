@@ -78,9 +78,9 @@ export function ProviderSelector({
                   {formatProviderWithCount(selectedProvider, totalProviderCount)}
                 </span>
                 {selectedProvider.supportsStreaming && (
-                  <Zap className="w-3 h-3" style={{ color: '#F59E0B' }} title="Supports streaming" />
+                  <Zap className="w-3 h-3" style={{ color: '#F59E0B' }} />
                 )}
-                <Activity className="w-3 h-3" style={{ color: '#10B981' }} title="Active" />
+                <Activity className="w-3 h-3" style={{ color: '#10B981' }} />
               </>
             ) : (
               <>
@@ -195,7 +195,7 @@ export function ProviderSelector({
 
                       {/* Status Indicator */}
                       <div className="flex-shrink-0">
-                        <Activity className="w-3 h-3" style={{ color: '#10B981' }} title="Available" />
+                        <Activity className="w-3 h-3" style={{ color: '#10B981' }} />
                       </div>
                     </div>
                   </div>
