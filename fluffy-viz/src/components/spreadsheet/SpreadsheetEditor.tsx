@@ -257,12 +257,18 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
           </div>
         </div>
 
-        {/* Spreadsheet */}
-        <Card className="rounded-2xl shadow-sm">
+        {/* Spreadsheet Card with integrated drawer */}
+        <Card className="rounded-2xl shadow-sm relative overflow-hidden">
           <CardHeader>
             <CardTitle className="font-sans">Spreadsheet Editor</CardTitle>
           </CardHeader>
-          <CardContent>
+
+          {/* Content area that shifts left when drawer opens */}
+          <CardContent
+            className={`transition-all duration-300 ease-in-out ${
+              isAddColumnModalOpen ? 'mr-[440px]' : 'mr-0'
+            }`}
+          >
             <SpreadsheetTable
               data={data}
               columns={columns}
@@ -271,19 +277,30 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
               onColumnTemplateSelect={setSelectedColumnTemplate}
             />
           </CardContent>
-        </Card>
 
-        {/* Add Column Modal */}
-        <AddColumnModal
-          isOpen={isAddColumnModalOpen}
-          onClose={() => {
-            setIsAddColumnModalOpen(false)
-            setSelectedColumnTemplate(null)
-          }}
-          onAddColumn={addColumn}
-          template={selectedColumnTemplate}
-          availableColumns={columns.map(col => col.name)}
-        />
+          {/* Backdrop - only covers the card */}
+          {isAddColumnModalOpen && (
+            <div
+              className="absolute inset-0 bg-black/30 transition-opacity duration-300 z-40"
+              onClick={() => {
+                setIsAddColumnModalOpen(false)
+                setSelectedColumnTemplate(null)
+              }}
+            />
+          )}
+
+          {/* Drawer - slides in from right within card bounds */}
+          <AddColumnModal
+            isOpen={isAddColumnModalOpen}
+            onClose={() => {
+              setIsAddColumnModalOpen(false)
+              setSelectedColumnTemplate(null)
+            }}
+            onAddColumn={addColumn}
+            template={selectedColumnTemplate}
+            availableColumns={columns.map(col => col.name)}
+          />
+        </Card>
       </div>
     </div>
   )

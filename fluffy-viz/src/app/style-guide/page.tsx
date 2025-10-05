@@ -1,7 +1,6 @@
 "use client"
 
 import { useState } from "react"
-import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -11,13 +10,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Progress } from "@/components/ui/progress"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { WorkflowBreadcrumb, CompactWorkflowBreadcrumb, VerticalWorkflowBreadcrumb } from "@/components/workflow-breadcrumb"
 import { EnhancedUpload } from "@/components/enhanced-upload"
 import { AIProviderConfigDemo } from "@/components/ai-provider-config-demo"
 import {
-  BarChart3,
   Database,
   Users,
   FileBarChart,
@@ -104,6 +102,7 @@ export default function StyleGuide() {
       default: return "bg-gray-100 text-gray-800"
     }
   }
+
 
   return (
     <div className="min-h-screen bg-background p-8" style={{ fontFamily: 'Open Sans, sans-serif' }}>
