@@ -1,5 +1,14 @@
 import { Languages, Tags, FileText, TrendingUp, FolderOpen, Wand2 } from 'lucide-react'
 
+export interface TemplateVariable {
+  id: string
+  display_name: string
+  slug: string
+  tooltip: string
+  required: boolean
+  default?: string
+}
+
 export interface PromptConfig {
   category: string
   title: string
@@ -8,7 +17,7 @@ export interface PromptConfig {
     system_instruction: string
     prompt_template: string
   }
-  template_variables: Record<string, string>
+  template_variables: TemplateVariable[]
   response_format: string
   inference_config: {
     generation: {

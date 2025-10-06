@@ -4,9 +4,11 @@ import { useState, useEffect } from 'react'
 import { X } from 'lucide-react'
 import { ModelSelector } from './ModelSelector'
 import { ProviderSelector } from './ProviderSelector'
+import { PromptComposer } from './PromptComposer'
 import { Model, ModelProvider } from '@/types/models'
 import { getDefaultProviderForModel } from '@/lib/providers'
-import { loadPromptTemplate } from '@/config/ai-column-templates'
+import { loadPromptConfig } from '@/config/ai-column-templates'
+import { ColumnMeta } from '@/lib/prompt-serializer'
 
 interface AddColumnModalProps {
   isOpen: boolean
@@ -19,6 +21,7 @@ interface AddColumnModalProps {
   }) => void
   template: string | null
   availableColumns: string[]
+  dataRows: any[]
 }
 
 export function AddColumnModal({
@@ -26,29 +29,36 @@ export function AddColumnModal({
   onClose,
   onAddColumn,
   template,
-  availableColumns
+  availableColumns,
+  dataRows
 }: AddColumnModalProps) {
   const [columnName, setColumnName] = useState('')
   const [prompt, setPrompt] = useState('')
+  const [promptValid, setPromptValid] = useState(false)
   const [selectedModel, setSelectedModel] = useState<Model | undefined>(undefined)
   const [selectedProvider, setSelectedProvider] = useState<ModelProvider | undefined>(undefined)
-  const [selectedColumn, setSelectedColumn] = useState(availableColumns[0] || '')
+  const [templateConfig, setTemplateConfig] = useState<any>(null)
+
+  // Convert available columns to ColumnMeta format
+  const columnsMeta: ColumnMeta[] = availableColumns.map(colName => ({
+    id: colName,
+    slug: colName,
+    displayName: colName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+    preview: dataRows.length > 0 ? String(dataRows[0][colName] || '') : ''
+  }))
 
   useEffect(() => {
     if (template) {
-      loadPromptTemplate(template).then(templatePrompt => {
-        const promptWithColumn = templatePrompt.replace(/{input}/g, `{{${selectedColumn}}}`)
-        setPrompt(promptWithColumn)
+      loadPromptConfig(template).then(config => {
+        setTemplateConfig(config)
         setColumnName(`${template}_column`)
+      }).catch(err => {
+        console.error('Error loading template config:', err)
       })
+    } else {
+      setTemplateConfig(null)
     }
-  }, [template, selectedColumn])
-
-  useEffect(() => {
-    if (availableColumns.length > 0) {
-      setSelectedColumn(availableColumns[0])
-    }
-  }, [availableColumns])
+  }, [template])
 
   const handleModelSelect = (model: Model) => {
     setSelectedModel(model)
@@ -64,9 +74,14 @@ export function AddColumnModal({
     setSelectedProvider(provider)
   }
 
+  const handlePromptChange = (newPrompt: string, isValid: boolean) => {
+    setPrompt(newPrompt)
+    setPromptValid(isValid)
+  }
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (!columnName.trim() || !prompt.trim() || !selectedModel || !selectedProvider) return
+    if (!columnName.trim() || !prompt.trim() || !promptValid || !selectedModel || !selectedProvider) return
 
     onAddColumn({
       name: columnName.trim(),
@@ -78,6 +93,7 @@ export function AddColumnModal({
     // Reset form
     setColumnName('')
     setPrompt('')
+    setPromptValid(false)
     setSelectedModel(undefined)
     setSelectedProvider(undefined)
   }
@@ -121,20 +137,12 @@ export function AddColumnModal({
               />
             </div>
 
-            {/* Prompt */}
-            <div>
-              <label htmlFor="prompt" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                Prompt
-              </label>
-              <textarea
-                id="prompt"
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[150px] resize-y bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
-                placeholder="Enter your prompt here..."
-                required
-              />
-            </div>
+            {/* Prompt Composer */}
+            <PromptComposer
+              availableColumns={columnsMeta}
+              initialTemplate={templateConfig}
+              onPromptChange={handlePromptChange}
+            />
 
             {/* Model Selection */}
             <div className="space-y-4">
@@ -170,7 +178,7 @@ export function AddColumnModal({
           <button
             type="submit"
             onClick={handleSubmit}
-            disabled={!selectedModel || !selectedProvider || !columnName.trim() || !prompt.trim()}
+            disabled={!selectedModel || !selectedProvider || !columnName.trim() || !prompt.trim() || !promptValid}
             className="w-full px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed rounded-md transition-colors"
           >
             Add Column

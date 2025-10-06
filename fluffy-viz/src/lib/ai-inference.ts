@@ -1,5 +1,4 @@
 import { Model, ModelProvider } from '@/types/models'
-import { interpolatePrompt } from '@/config/ai-column-templates'
 
 export interface InferenceOptions {
   model: Model
@@ -12,6 +11,28 @@ export interface InferenceOptions {
 export interface InferenceResult {
   content: string
   error?: string
+}
+
+/**
+ * Interpolate prompt template with row data using {{column_slug}} syntax
+ */
+export function interpolatePromptForRow(
+  template: string,
+  row: Record<string, any>
+): string {
+  let result = template
+
+  // Replace {{column_slug}} with actual row values
+  const regex = /\{\{(\w+)\}\}/g
+  result = result.replace(regex, (match, columnSlug) => {
+    const value = row[columnSlug]
+    if (value === null || value === undefined) {
+      return '(empty)'
+    }
+    return String(value)
+  })
+
+  return result
 }
 
 /**
@@ -70,14 +91,8 @@ export async function generateColumnData(
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i]
 
-    // Build variables object from row data
-    const variables: Record<string, string> = {}
-    for (const colName of referenceColumns) {
-      variables[colName] = String(row[colName] || '')
-    }
-
-    // Interpolate prompt with row data
-    const interpolatedPrompt = interpolatePrompt(prompt, variables)
+    // Interpolate prompt with row data using {{column_slug}} syntax
+    const interpolatedPrompt = interpolatePromptForRow(prompt, row)
 
     // Generate completion
     const result = await generateCompletion({

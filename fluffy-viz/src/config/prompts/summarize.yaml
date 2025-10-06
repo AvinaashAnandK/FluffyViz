@@ -17,10 +17,14 @@ prompt_params:
     Condense the following text, capturing its essential meaning and key points.
 
     Text to summarize:
-    {input}
+    {{input}}
 
 template_variables:
-  input: ""
+  - id: "input"
+    display_name: "Text to Summarize"
+    slug: "input"
+    tooltip: "Text that will be summarized"
+    required: true
 
 response_format: TEXT
 

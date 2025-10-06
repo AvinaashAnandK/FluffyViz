@@ -10,7 +10,6 @@ import { useFileStorage } from '@/hooks/use-file-storage'
 import { Button } from '@/components/ui/button'
 import { ArrowLeft, Download, Save, Loader2 } from 'lucide-react'
 import { generateColumnData } from '@/lib/ai-inference'
-import { interpolatePrompt } from '@/config/ai-column-templates'
 import { parseFileContent } from '@/lib/format-parser'
 
 export interface Column {
@@ -299,6 +298,7 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
             onAddColumn={addColumn}
             template={selectedColumnTemplate}
             availableColumns={columns.map(col => col.name)}
+            dataRows={data}
           />
         </Card>
       </div>

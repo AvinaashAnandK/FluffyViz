@@ -14,14 +14,23 @@ prompt_params:
     5. Review translation carefully for quality
 
   prompt_template: |
-    Translate the following text to {language}.
+    Translate the following text to {{language}}.
 
     Original text:
-    {input}
+    {{input}}
 
 template_variables:
-  language: English
-  input: ""
+  - id: "input"
+    display_name: "Text to Translate"
+    slug: "input"
+    tooltip: "The text that will be translated"
+    required: true
+  - id: "language"
+    display_name: "Target Language"
+    slug: "language"
+    tooltip: "Language to translate to (e.g., English, Spanish)"
+    required: false
+    default: "English"
 
 response_format: TEXT
 

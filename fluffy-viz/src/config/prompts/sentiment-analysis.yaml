@@ -17,10 +17,14 @@ prompt_params:
     Provide a brief explanation for your classification.
 
     Text to analyze:
-    {input}
+    {{input}}
 
 template_variables:
-  input: ""
+  - id: "input"
+    display_name: "Text to Analyze"
+    slug: "input"
+    tooltip: "Text for sentiment analysis"
+    required: true
 
 response_format: TEXT
 

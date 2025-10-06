@@ -14,16 +14,25 @@ prompt_params:
     5. Be consistent in your classification logic
 
   prompt_template: |
-    Classify the following text into one of these categories: {categories}
+    Classify the following text into one of these categories: {{categories}}
 
     Provide only the category name without additional explanation.
 
     Text to classify:
-    {input}
+    {{input}}
 
 template_variables:
-  categories: ""
-  input: ""
+  - id: "input"
+    display_name: "Text to Classify"
+    slug: "input"
+    tooltip: "Text to be classified"
+    required: true
+  - id: "categories"
+    display_name: "Categories"
+    slug: "categories"
+    tooltip: "Comma-separated list of categories"
+    required: false
+    default: "General, Technical, Support"
 
 response_format: TEXT
 

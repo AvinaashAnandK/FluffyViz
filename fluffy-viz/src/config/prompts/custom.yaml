@@ -13,13 +13,9 @@ prompt_params:
     4. Be accurate and thorough
     5. Return output in the requested format
 
-  prompt_template: |
-    Process the following data according to your specific requirements:
+  prompt_template: ""
 
-    {input}
-
-template_variables:
-  input: ""
+template_variables: []
 
 response_format: TEXT
 

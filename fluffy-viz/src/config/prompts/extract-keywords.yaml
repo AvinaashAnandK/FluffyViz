@@ -17,10 +17,14 @@ prompt_params:
     Identify and extract the most important keywords or key phrases from the following text.
 
     Text for keyword extraction:
-    {input}
+    {{input}}
 
 template_variables:
-  input: ""
+  - id: "input"
+    display_name: "Text for Extraction"
+    slug: "input"
+    tooltip: "Text to extract keywords from"
+    required: true
 
 response_format: TEXT
 
