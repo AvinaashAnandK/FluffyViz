@@ -708,7 +708,7 @@ Embedding Atlas Integration - Feature Development Roadmap
   - [ ] Loading states for Type 2 (embedding query takes time)
 
   ---
-  Feature 4: Metadata Overlay System
+  Feature 6: Metadata Overlay System
 
   What to Build
 
@@ -784,7 +784,7 @@ Embedding Atlas Integration - Feature Development Roadmap
   - No Mosaic SQL editor exposed to user
 
   ---
-  Feature 5: Automated Clustering
+  Feature 3: Automated Clustering
 
   What to Build
 
@@ -882,7 +882,7 @@ Embedding Atlas Integration - Feature Development Roadmap
   - Handles 1000+ points in <30 seconds
 
   ---
-  Feature 6: LLM Cluster Labeling
+  Feature 4: LLM Cluster Labeling
 
   What to Build
 
@@ -1002,7 +1002,7 @@ Embedding Atlas Integration - Feature Development Roadmap
   - Labels persist in IndexedDB cache
 
   ---
-  Feature 7: Strategic Sampling (Boundary Detection)
+  Feature 5: Strategic Sampling (Boundary Detection)
 
   What to Build
 
@@ -1136,71 +1136,7 @@ Embedding Atlas Integration - Feature Development Roadmap
   - Handles 10k+ dataset in <10 seconds
 
   ---
-  Feature 8: Bidirectional Selection Sync
-
-  What to Build
-
-  Link scatter plot selection with spreadsheet table
-
-  Technical Scope
-
-  // Modify existing components
-  src/app/visualize/[fileId]/page.tsx
-  src/components/spreadsheet/SpreadsheetTable.tsx
-
-  // Add selection state management
-  const [selectedIndices, setSelectedIndices] = useState<number[]>([])
-
-  // Bidirectional sync
-  <AtlasViewer
-    onSelectionChange={(indices) => {
-      setSelectedIndices(indices)
-      scrollTableToRow(indices[0])
-    }}
-  />
-
-  <SpreadsheetTable
-    selectedRows={selectedIndices}
-    onRowSelect={(indices) => {
-      setSelectedIndices(indices)
-      highlightPointsOnGraph(indices)
-    }}
-  />
-
-  Selection Behaviors
-
-  From Graph → Table:
-  - Click point → scroll to row in table + highlight
-  - Brush select → highlight multiple rows
-  - Double-click → open row in detail view
-
-  From Table → Graph:
-  - Click row → highlight point on graph + zoom to it
-  - Multi-select rows → highlight multiple points
-  - Ctrl+click → add to selection
-
-  Atlas Integration
-
-  // Atlas EmbeddingView supports selection callbacks
-  <EmbeddingView
-    selection={selectedIndices}
-    onSelectionChange={(newSelection) => {
-      // Handle selection update
-    }}
-  />
-
-  Acceptance Criteria
-
-  - Click graph point → table scrolls to row
-  - Click table row → graph highlights + zooms to point
-  - Multi-select works in both directions
-  - Selection state persists when switching tabs
-  - Selection cleared with Escape key
-  - Selection visible in both views simultaneously
-  - Latency <50ms for selection sync
-
-  ---
-  Feature 9: Export & Sharing
+  Feature 7: Export & Sharing
 
   What to Build
 
@@ -1322,7 +1258,7 @@ Embedding Atlas Integration - Feature Development Roadmap
   - All exports complete in <3 seconds
 
   ---
-  Feature 10: Incremental Updates
+  Feature 8: Incremental Updates
 
   What to Build
 
@@ -1466,18 +1402,17 @@ Embedding Atlas Integration - Feature Development Roadmap
   For agentic development, implement in this sequence to minimize blockers:
 
   1. Feature 1 (Agent Trace Viewer with Embedding System) - No dependencies, includes visualization
-  2. Feature 2 (Dual Search System) - Depends on Feature 1
-  3. Feature 3 (Metadata Overlays) - Depends on Feature 1
-  4. Feature 4 (Automated Clustering) - Depends on Feature 1
-  5. Feature 5 (LLM Labeling) - Depends on Feature 4
-  6. Feature 6 (Strategic Sampling) - Depends on Features 4, 5
-  7. Feature 7 (Selection Sync) - Depends on Feature 1 (optional)
-  8. Feature 8 (Export) - Depends on Features 1-6
-  9. Feature 9 (Incremental Updates) - Depends on all (optimization layer)
+  2. Feature 2 (Multi-Mode Search System) - Depends on Feature 1
+  3. Feature 3 (Automated Clustering) - Depends on Feature 1
+  4. Feature 4 (LLM Labeling) - Depends on Feature 3
+  5. Feature 5 (Strategic Sampling) - Depends on Features 3, 4
+  6. Feature 6 (Metadata Overlay System) - Depends on Feature 1
+  7. Feature 7 (Export & Sharing) - Depends on Features 1-6
+  8. Feature 8 (Incremental Updates) - Depends on all (optimization layer)
 
   Parallel Development Possible:
-  - Features 2, 3, 4 can be built simultaneously after Feature 1
-  - Features 7, 8 are independent polish features
+  - Features 2, 3, 6 can be built simultaneously after Feature 1
+  - Feature 7 and 8 are enhancement/optimization features
 
   ---
   ## Potential Future Additions
@@ -1597,3 +1532,71 @@ Embedding Atlas Integration - Feature Development Roadmap
   - UI needs to display highlighted snippets elegantly
 
   **Decision:** Defer to post-MVP. Feature 2 provides functional search; citations are polish/UX enhancement.
+
+  ---
+
+  ### Bidirectional Selection Sync
+
+  **What it would provide:**
+
+  Link scatter plot selection with spreadsheet table for bidirectional interaction.
+
+  **Technical Scope:**
+
+  ```typescript
+  // Modify existing components
+  src/app/edit/[fileId]/page.tsx
+  src/components/spreadsheet/SpreadsheetTable.tsx
+
+  // Add selection state management
+  const [selectedIndices, setSelectedIndices] = useState<number[]>([])
+
+  // Bidirectional sync
+  <AgentTraceViewer
+    onSelectionChange={(indices) => {
+      setSelectedIndices(indices)
+      scrollTableToRow(indices[0])
+    }}
+  />
+
+  <SpreadsheetTable
+    selectedRows={selectedIndices}
+    onRowSelect={(indices) => {
+      setSelectedIndices(indices)
+      highlightPointsOnGraph(indices)
+    }}
+  />
+  ```
+
+  **Selection Behaviors:**
+
+  From Graph → Table:
+  - Click point → scroll to row in table + highlight
+  - Brush select → highlight multiple rows
+  - Double-click → open row in detail view
+
+  From Table → Graph:
+  - Click row → highlight point on graph + zoom to it
+  - Multi-select rows → highlight multiple points
+  - Ctrl+click → add to selection
+
+  **When to build:**
+
+  - User feedback indicates need for table-visualization coordination
+  - Users working heavily with both views simultaneously
+  - After Feature 1 is mature and stable
+
+  **Complexity cost:**
+
+  - High: Requires shared state between tabs
+  - Table performance impact (highlighting/scrolling on selection)
+  - Visualization performance impact (highlighting selected points)
+  - Potential race conditions between user actions
+
+  **Alternative solutions:**
+
+  - Keep views independent
+  - Use detail panel in visualization (already in Feature 1)
+  - Use search to find rows (Feature 2)
+
+  **Decision:** Defer to post-MVP. Feature 1's detail panel and Feature 2's search provide sufficient navigation. Sync adds complexity without clear workflow justification.
