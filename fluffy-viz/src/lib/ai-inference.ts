@@ -1,3 +1,12 @@
+import { generateText, embed, embedMany } from 'ai'
+import { createOpenAI } from '@ai-sdk/openai'
+import { createAnthropic } from '@ai-sdk/anthropic'
+import { createGoogleGenerativeAI } from '@ai-sdk/google'
+import { createMistral } from '@ai-sdk/mistral'
+import { createCohere } from '@ai-sdk/cohere'
+import { createGroq } from '@ai-sdk/groq'
+import { HfInference } from '@huggingface/inference'
+import type { ProviderKey } from '@/config/provider-settings'
 import { Model, ModelProvider } from '@/types/models'
 
 export interface InferenceOptions {
@@ -36,41 +45,204 @@ export function interpolatePromptForRow(
 }
 
 /**
- * Simple AI inference function
- * This is a placeholder - in production, you would:
- * 1. Use actual API keys from provider configuration
- * 2. Make real API calls to the selected provider
- * 3. Handle streaming, retries, and error cases
+ * Get AI SDK model instance for major providers
+ * API keys are passed dynamically from provider configuration
+ */
+function getAISDKModel(
+  providerId: ProviderKey,
+  modelId: string,
+  apiKey: string
+) {
+  // All AI SDK providers use factory pattern for API key initialization
+  switch (providerId) {
+    case 'openai': {
+      const provider = createOpenAI({ apiKey })
+      return provider(modelId)
+    }
+    case 'anthropic': {
+      const provider = createAnthropic({ apiKey })
+      return provider(modelId)
+    }
+    case 'google': {
+      const provider = createGoogleGenerativeAI({ apiKey })
+      return provider(modelId)
+    }
+    case 'mistral': {
+      const provider = createMistral({ apiKey })
+      return provider(modelId)
+    }
+    case 'cohere': {
+      const provider = createCohere({ apiKey })
+      return provider(modelId)
+    }
+    case 'groq': {
+      const provider = createGroq({ apiKey })
+      return provider(modelId)
+    }
+    default:
+      throw new Error(`AI SDK does not support provider: ${providerId}`)
+  }
+}
+
+/**
+ * HuggingFace-specific inference
+ */
+async function generateHuggingFaceCompletion(
+  options: InferenceOptions
+): Promise<InferenceResult> {
+  const { model, prompt, temperature = 0.7, maxTokens = 500 } = options
+  const apiKey = options.provider.apiKey
+
+  const hf = new HfInference(apiKey)
+
+  try {
+    // Use chat completion for instruction models
+    if (
+      model.id.includes('Instruct') ||
+      model.id.includes('chat') ||
+      model.id.includes('Chat')
+    ) {
+      const response = await hf.chatCompletion({
+        model: model.id,
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: maxTokens,
+        temperature,
+      })
+
+      return {
+        content: response.choices[0]?.message?.content || '',
+      }
+    } else {
+      // Use text generation for base models
+      const response = await hf.textGeneration({
+        model: model.id,
+        inputs: prompt,
+        parameters: {
+          max_new_tokens: maxTokens,
+          temperature,
+          return_full_text: false,
+        },
+      })
+
+      return {
+        content: response.generated_text,
+      }
+    }
+  } catch (error) {
+    throw new Error(
+      `HuggingFace inference failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+    )
+  }
+}
+
+/**
+ * Main inference function - routes to correct implementation
  */
 export async function generateCompletion(
   options: InferenceOptions
 ): Promise<InferenceResult> {
-  const { model, provider, prompt, temperature = 0.7, maxTokens = 500 } = options
+  const { provider, model, prompt, temperature = 0.7, maxTokens = 500 } = options
 
   try {
-    // For now, return a mock response
-    // In production, this would call the actual provider API
-    console.log('AI Inference Request:', {
-      model: model.name,
-      provider: provider.displayName,
-      prompt: prompt.substring(0, 100) + '...',
-      temperature,
-      maxTokens
+    // Validate API key is present
+    if (!provider.apiKey) {
+      throw new Error(`API key missing for provider: ${provider.id}`)
+    }
+
+    console.log('[AI Inference] Starting generation:', {
+      providerId: provider.id,
+      modelId: model.id,
+      hasApiKey: !!provider.apiKey,
+      apiKeyLength: provider.apiKey?.length,
+      apiKeyPrefix: provider.apiKey?.substring(0, 10)
     })
 
-    // Simulate API call delay
-    await new Promise(resolve => setTimeout(resolve, 1000))
-
-    // Return mock response
-    return {
-      content: `[AI Generated: ${model.name}]`
+    // Route to HuggingFace for HF models
+    if (provider.id === 'huggingface') {
+      return await generateHuggingFaceCompletion(options)
     }
+
+    // Use AI SDK for major providers
+    const aiModel = getAISDKModel(
+      provider.id as ProviderKey,
+      model.id,
+      provider.apiKey
+    )
+
+    const { text } = await generateText({
+      model: aiModel,
+      prompt,
+      temperature,
+    })
+
+    return { content: text }
   } catch (error) {
     console.error('AI inference error:', error)
     return {
       content: '',
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error instanceof Error ? error.message : 'Unknown error',
     }
+  }
+}
+
+/**
+ * Embeddings - unified interface for all providers
+ */
+export async function generateEmbeddings(
+  texts: string[],
+  provider: ProviderKey,
+  modelId: string,
+  apiKey: string
+): Promise<number[][]> {
+  // Use HuggingFace Inference API
+  if (provider === 'huggingface') {
+    const hf = new HfInference(apiKey)
+    const result = await hf.featureExtraction({
+      model: modelId,
+      inputs: texts,
+    })
+
+    // Normalize return format
+    return Array.isArray(result[0])
+      ? (result as number[][])
+      : [result as number[]]
+  }
+
+  // Use AI SDK for other providers
+  const embeddingModel = getEmbeddingModel(provider, modelId, apiKey)
+
+  const { embeddings } = await embedMany({
+    model: embeddingModel,
+    values: texts,
+  })
+
+  return embeddings
+}
+
+function getEmbeddingModel(
+  provider: ProviderKey,
+  modelId: string,
+  apiKey: string
+) {
+  switch (provider) {
+    case 'openai': {
+      const openai = createOpenAI({ apiKey })
+      return openai.textEmbeddingModel(modelId)
+    }
+    case 'google': {
+      const google = createGoogleGenerativeAI({ apiKey })
+      return google.textEmbeddingModel(modelId)
+    }
+    case 'mistral': {
+      const mistral = createMistral({ apiKey })
+      return mistral.textEmbeddingModel(modelId)
+    }
+    case 'cohere': {
+      const cohere = createCohere({ apiKey })
+      return cohere.textEmbeddingModel(modelId)
+    }
+    default:
+      throw new Error(`Embeddings not supported for provider: ${provider}`)
   }
 }
 
@@ -84,30 +256,65 @@ export async function generateColumnData(
   model: Model,
   provider: ModelProvider,
   referenceColumns: string[],
-  onProgress?: (current: number, total: number) => void
+  onProgress?: (current: number, total: number) => void,
+  onCellComplete?: (rowIndex: number, result: InferenceResult) => void
 ): Promise<Map<number, InferenceResult>> {
-  const results = new Map<number, InferenceResult>()
-
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i]
-
-    // Interpolate prompt with row data using {{column_slug}} syntax
-    const interpolatedPrompt = interpolatePromptForRow(prompt, row)
-
-    // Generate completion
-    const result = await generateCompletion({
-      model,
-      provider,
-      prompt: interpolatedPrompt
+  try {
+    // Call the server-side API endpoint for batch generation
+    const response = await fetch('/api/generate-column', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        providerId: provider.id,
+        modelId: model.id,
+        prompt,
+        rows,
+        temperature: 0.7,
+        maxTokens: 500,
+      }),
     })
 
-    results.set(i, result)
-
-    // Report progress
-    if (onProgress) {
-      onProgress(i + 1, rows.length)
+    if (!response.ok) {
+      const errorData = await response.json()
+      throw new Error(errorData.error || 'Failed to generate column data')
     }
-  }
 
-  return results
+    const { results: apiResults } = await response.json()
+
+    // Convert API results array to Map and notify on each cell completion
+    const results = new Map<number, InferenceResult>()
+    apiResults.forEach((result: InferenceResult & { rowIndex: number }) => {
+      const rowIndex = result.rowIndex
+      const cellResult = { content: result.content, error: result.error }
+
+      results.set(rowIndex, cellResult)
+
+      // Notify cell completion immediately
+      if (onCellComplete) {
+        onCellComplete(rowIndex, cellResult)
+      }
+
+      // Report overall progress
+      if (onProgress) {
+        onProgress(results.size, rows.length)
+      }
+    })
+
+    return results
+  } catch (error) {
+    console.error('Error generating column data:', error)
+
+    // Return error result for all rows
+    const errorResults = new Map<number, InferenceResult>()
+    rows.forEach((_, index) => {
+      errorResults.set(index, {
+        content: '',
+        error: error instanceof Error ? error.message : 'Unknown error',
+      })
+    })
+
+    return errorResults
+  }
 }

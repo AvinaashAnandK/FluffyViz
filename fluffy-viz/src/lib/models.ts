@@ -1,5 +1,7 @@
 import axios from 'axios'
 import { Model, ModelSearchParams, ModelSearchResponse, ModelCategory } from '@/types/models'
+import { loadModelRegistry, getTextModelsForEnabledProviders, type ModelConfig } from '@/config/model-registry'
+import { loadProviderSettings, getEnabledProviders, hasCapability, type ProviderKey } from '@/config/provider-settings'
 
 const HUGGINGFACE_API_BASE = 'https://huggingface.co/api'
 
@@ -112,47 +114,83 @@ export function getRecommendedModels(): Model[] {
 }
 
 /**
- * Search models with combined recommended and HF models
+ * Convert ModelConfig from registry to Model type
+ */
+function convertModelConfigToModel(modelConfig: ModelConfig, provider: string): Model {
+  return {
+    id: modelConfig.id,
+    name: modelConfig.name,
+    description: modelConfig.description,
+    parameters: modelConfig.contextWindow ? `${(modelConfig.contextWindow / 1000).toFixed(0)}K ctx` : undefined,
+    category: modelConfig.recommended ? 'recommended' : 'all',
+    provider: provider,
+    contextLength: modelConfig.contextWindow,
+    tags: [provider, modelConfig.type]
+  }
+}
+
+/**
+ * Search models from model registry, filtered by enabled providers with text capability
  */
 export async function searchModels(params: ModelSearchParams = {}): Promise<ModelCategory[]> {
   const categories: ModelCategory[] = []
 
-  // Add recommended models if no specific query or showing all
-  if (!params.query || params.category === 'recommended') {
-    const recommendedModels = getRecommendedModels()
-    const filteredRecommended = params.query
-      ? recommendedModels.filter(model =>
-          model.name.toLowerCase().includes(params.query!.toLowerCase()) ||
-          model.tags?.some(tag => tag.toLowerCase().includes(params.query!.toLowerCase()))
-        )
-      : recommendedModels
+  try {
+    // Load model registry
+    await loadModelRegistry()
 
-    if (filteredRecommended.length > 0) {
+    // Load provider config and get enabled providers with text capability
+    const providerConfig = await loadProviderSettings()
+    const enabledProviderKeys = getEnabledProviders(providerConfig)
+      .filter(provider => hasCapability(providerConfig, provider as ProviderKey, 'text'))
+
+    // Get all text models from enabled providers
+    const modelConfigs = getTextModelsForEnabledProviders(enabledProviderKeys)
+
+    // Convert to Model type with provider info
+    const allModels = modelConfigs.map(config =>
+      convertModelConfigToModel(config, (config as any).provider || 'unknown')
+    )
+
+    // Filter by search query if provided
+    const filteredModels = params.query
+      ? allModels.filter(model =>
+          model.name.toLowerCase().includes(params.query!.toLowerCase()) ||
+          model.id.toLowerCase().includes(params.query!.toLowerCase()) ||
+          model.description?.toLowerCase().includes(params.query!.toLowerCase())
+        )
+      : allModels
+
+    // Separate recommended and all models
+    const recommendedModels = filteredModels.filter(m => m.category === 'recommended')
+    const otherModels = filteredModels.filter(m => m.category !== 'recommended')
+
+    if (recommendedModels.length > 0) {
       categories.push({
         id: 'recommended',
         name: 'Recommended Models',
-        description: 'Curated models for common tasks',
-        models: filteredRecommended
+        description: 'Best models from your configured providers',
+        models: recommendedModels
       })
     }
-  }
 
-  // Add Hugging Face models if showing all or specific query
-  if (!params.category || params.category === 'all' || params.query) {
-    try {
-      const hfResponse = await fetchHuggingFaceModels(params)
-      if (hfResponse.models.length > 0) {
-        categories.push({
-          id: 'huggingface',
-          name: 'All models available on Hugging Face',
-          description: 'Browse all available models',
-          models: hfResponse.models
-        })
-      }
-    } catch (error) {
-      console.error('Error fetching HuggingFace models:', error)
-      // Fallback to recommended models only
+    if (otherModels.length > 0) {
+      categories.push({
+        id: 'all',
+        name: 'All Available Models',
+        description: 'All models from your configured providers',
+        models: otherModels
+      })
     }
+
+    // If no models found, show helpful message
+    if (categories.length === 0) {
+      console.warn('No models available. Check provider configuration.')
+    }
+
+  } catch (error) {
+    console.error('Error loading models:', error)
+    // Return empty categories on error
   }
 
   return categories

@@ -261,7 +261,7 @@ function parseCSV(content: string): Promise<ParsedData[]> {
     Papa.parse(content, {
       header: true,
       skipEmptyLines: true,
-      dynamicTyping: true,
+      dynamicTyping: false, // Keep all values as strings to prevent auto-parsing of LLM responses
       complete: (results) => {
         if (results.errors.length > 0) {
           console.warn('CSV parsing warnings:', results.errors)

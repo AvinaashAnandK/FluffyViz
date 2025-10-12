@@ -10,13 +10,15 @@ interface ModelSelectorProps {
   onModelSelect: (model: Model) => void
   placeholder?: string
   className?: string
+  filterByProvider?: string
 }
 
 export function ModelSelector({
   selectedModel,
   onModelSelect,
   placeholder = "Search models...",
-  className = ""
+  className = "",
+  filterByProvider
 }: ModelSelectorProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
@@ -27,7 +29,7 @@ export function ModelSelector({
   // Load initial models
   useEffect(() => {
     loadModels()
-  }, [])
+  }, [filterByProvider])
 
   // Search models when query changes
   useEffect(() => {
@@ -38,7 +40,7 @@ export function ModelSelector({
     }, 300)
 
     return () => clearTimeout(timer)
-  }, [searchQuery, isOpen])
+  }, [searchQuery, isOpen, filterByProvider])
 
   const loadModels = async (query?: string) => {
     if (loading) return
@@ -79,18 +81,33 @@ export function ModelSelector({
     }
   }
 
-  // Memoized filtered categories
+  // Filter categories by provider first, then by search query
   const filteredCategories = useMemo(() => {
-    if (!searchQuery) return categories
+    let filtered = categories
 
-    return categories.map(category => ({
-      ...category,
-      models: category.models.filter(model =>
-        model.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        model.tags?.some(tag => tag.toLowerCase().includes(searchQuery.toLowerCase()))
-      )
-    })).filter(category => category.models.length > 0)
-  }, [categories, searchQuery])
+    // Apply provider filter
+    if (filterByProvider) {
+      filtered = filtered.map(category => ({
+        ...category,
+        models: category.models.filter(model => {
+          return (model as any).provider === filterByProvider
+        })
+      })).filter(category => category.models.length > 0)
+    }
+
+    // Apply search filter
+    if (searchQuery) {
+      filtered = filtered.map(category => ({
+        ...category,
+        models: category.models.filter(model =>
+          model.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          model.tags?.some(tag => tag.toLowerCase().includes(searchQuery.toLowerCase()))
+        )
+      })).filter(category => category.models.length > 0)
+    }
+
+    return filtered
+  }, [categories, filterByProvider, searchQuery])
 
   return (
     <div className={`relative ${className}`}>

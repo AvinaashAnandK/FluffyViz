@@ -78,8 +78,11 @@ describe('prompt-serializer', () => {
                   id: 'var1',
                   displayName: 'Input',
                   tooltip: 'Input text',
+                  required: true,
+                  defaultValue: null,
                   mappedColumnId: 'col1',
-                  mappedColumnName: 'user_message',
+                  mappedColumnName: 'User Message',
+                  mappedColumnSlug: 'user_message',
                 },
               },
             ],
@@ -100,6 +103,8 @@ describe('prompt-serializer', () => {
       expect(result.prompt).toBe('Translate {{user_message}}')
       expect(result.unmappedVariables).toHaveLength(0)
       expect(result.isValid).toBe(true)
+      expect(result.mappedVariableCount).toBe(1)
+      expect(result.totalVariableCount).toBe(1)
     })
 
     it('should detect unmapped variables', () => {
@@ -115,8 +120,11 @@ describe('prompt-serializer', () => {
                   id: 'var1',
                   displayName: 'Input',
                   tooltip: 'Input text',
+                  required: true,
+                  defaultValue: null,
                   mappedColumnId: null,
                   mappedColumnName: null,
+                  mappedColumnSlug: null,
                 },
               },
             ],
@@ -128,6 +136,8 @@ describe('prompt-serializer', () => {
       expect(result.unmappedVariables).toHaveLength(1)
       expect(result.unmappedVariables[0].displayName).toBe('Input')
       expect(result.isValid).toBe(false)
+      expect(result.mappedVariableCount).toBe(0)
+      expect(result.totalVariableCount).toBe(1)
     })
 
     it('should handle multiline prompts', () => {
@@ -147,6 +157,62 @@ describe('prompt-serializer', () => {
 
       const result = serializePrompt(doc, {})
       expect(result.prompt).toBe('Line 1\nLine 2')
+      expect(result.totalVariableCount).toBe(0)
+      expect(result.mappedVariableCount).toBe(0)
+    })
+
+    it('should preserve hard breaks inside paragraphs', () => {
+      const doc = {
+        type: 'doc',
+        content: [
+          {
+            type: 'paragraph',
+            content: [
+              { type: 'text', text: 'First line' },
+              { type: 'hardBreak' },
+              { type: 'text', text: 'Second line' },
+            ],
+          },
+        ],
+      }
+
+      const result = serializePrompt(doc, {})
+      expect(result.prompt).toBe('First line\nSecond line')
+      expect(result.totalVariableCount).toBe(0)
+    })
+
+    it('should fall back to default values for optional variables', () => {
+      const doc = {
+        type: 'doc',
+        content: [
+          {
+            type: 'paragraph',
+            content: [
+              { type: 'text', text: 'Translate to ' },
+              {
+                type: 'variableNode',
+                attrs: {
+                  id: 'var1',
+                  displayName: 'Language',
+                  tooltip: 'Target language',
+                  required: false,
+                  defaultValue: 'English',
+                  mappedColumnId: null,
+                  mappedColumnName: 'English',
+                  mappedColumnSlug: null,
+                },
+              },
+            ],
+          },
+        ],
+      }
+
+      const result = serializePrompt(doc, {})
+      expect(result.prompt).toBe('Translate to English')
+      expect(result.unmappedVariables).toHaveLength(0)
+      expect(result.isValid).toBe(true)
+      expect(result.mappedVariableCount).toBe(0)
+      expect(result.totalVariableCount).toBe(1)
     })
   })
 

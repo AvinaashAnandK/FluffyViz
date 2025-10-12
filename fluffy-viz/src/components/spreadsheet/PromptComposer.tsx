@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import { useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import { VariableNode } from '@/lib/tiptap/variable-node'
@@ -37,6 +37,20 @@ export function PromptComposer({
   const [mentionTriggerPos, setMentionTriggerPos] = useState<number | null>(null)
   const editorRef = useRef<HTMLDivElement>(null)
 
+  const onPromptChangeRef = useRef(onPromptChange)
+  useEffect(() => {
+    onPromptChangeRef.current = onPromptChange
+  }, [onPromptChange])
+
+  const cleanupAnchor = useCallback(() => {
+    setComboboxAnchor(prev => {
+      if (prev && prev.parentElement === document.body) {
+        prev.remove()
+      }
+      return null
+    })
+  }, [])
+
   const editor = useEditor(
     {
       immediatelyRender: false,
@@ -55,18 +69,40 @@ export function PromptComposer({
           setMentionTriggerPos(position)
           setActiveVariableId(null)
 
+          cleanupAnchor()
+
           // Get cursor position immediately (synchronously)
           const selection = window.getSelection()
           if (selection && selection.rangeCount > 0) {
             const range = selection.getRangeAt(0)
-            const rect = range.getBoundingClientRect()
-            console.log('[PromptComposer] Cursor rect:', rect)
+            const baseRect = range.getBoundingClientRect()
+            const clientRect = range.getClientRects()[0]
+
+            let anchorLeft = clientRect?.left ?? baseRect.left
+            let anchorBottom = clientRect?.bottom ?? baseRect.bottom
+
+            if (
+              (!anchorLeft && !anchorBottom) ||
+              (baseRect.width === 0 && baseRect.height === 0 && editorRef.current)
+            ) {
+              const editorRect = editorRef.current?.getBoundingClientRect()
+              if (editorRect) {
+                anchorLeft = editorRect.left + 12
+                anchorBottom = editorRect.top + 24
+              }
+            }
+
+            console.log('[PromptComposer] Cursor rect:', {
+              anchorLeft,
+              anchorBottom,
+              baseRect,
+            })
 
             // Create a fake anchor element at cursor position
             const fakeAnchor = document.createElement('span')
             fakeAnchor.style.position = 'fixed'
-            fakeAnchor.style.left = `${rect.left}px`
-            fakeAnchor.style.top = `${rect.bottom}px`
+            fakeAnchor.style.left = `${anchorLeft ?? 0}px`
+            fakeAnchor.style.top = `${anchorBottom ?? 0}px`
             fakeAnchor.style.width = '1px'
             fakeAnchor.style.height = '1px'
             fakeAnchor.style.pointerEvents = 'none'
@@ -82,10 +118,7 @@ export function PromptComposer({
         onCancel: () => {
           console.log('[PromptComposer] @ trigger cancelled')
           setComboboxOpen(false)
-          if (comboboxAnchor && comboboxAnchor.parentElement === document.body) {
-            document.body.removeChild(comboboxAnchor)
-          }
-          setComboboxAnchor(null)
+          cleanupAnchor()
           setMentionTriggerPos(null)
         },
       }),
@@ -108,10 +141,10 @@ export function PromptComposer({
     onUpdate: ({ editor }) => {
       const doc = editor.getJSON()
       const result = serializePrompt(doc, mappings)
-      onPromptChange(result.prompt, result.isValid)
+      onPromptChangeRef.current?.(result.prompt, result.isValid)
     },
   },
-  [initialTemplate?.prompt_params.prompt_template]
+  []
   )
 
   // Listen for variable pill clicks
@@ -121,8 +154,11 @@ export function PromptComposer({
         id: string
         displayName: string
         tooltip: string
+        required?: boolean
+        defaultValue?: string | null
         mappedColumnId?: string
         mappedColumnName?: string
+        mappedColumnSlug?: string
         pos: number
       }>
 
@@ -163,19 +199,64 @@ export function PromptComposer({
     if (editor) {
       const doc = editor.getJSON()
       const result = serializePrompt(doc, mappings)
-      onPromptChange(result.prompt, result.isValid)
+      onPromptChangeRef.current?.(result.prompt, result.isValid)
     }
-  }, [mappings, editor, onPromptChange])
+  }, [mappings, editor])
+
+  useEffect(() => {
+    if (!editor) return
+
+    let cancelled = false
+
+    const templateDoc = initialTemplate
+      ? hydrateDocumentFromTemplate(
+          initialTemplate.prompt_params.prompt_template,
+          initialTemplate.template_variables
+        )
+      : {
+          type: 'doc',
+          content: [{ type: 'paragraph' }],
+        }
+
+    const applyTemplate = () => {
+      if (cancelled || editor.isDestroyed) {
+        return
+      }
+
+      editor.commands.setContent(templateDoc, { emitUpdate: false })
+
+      setMappings({})
+      setActiveVariableId(null)
+      setMentionTriggerPos(null)
+      setComboboxOpen(false)
+      cleanupAnchor()
+
+      const result = serializePrompt(templateDoc, {})
+      onPromptChangeRef.current?.(result.prompt, result.isValid)
+    }
+
+    if (typeof queueMicrotask === 'function') {
+      queueMicrotask(applyTemplate)
+    } else {
+      Promise.resolve().then(applyTemplate)
+    }
+
+    return () => {
+      cancelled = true
+    }
+  }, [editor, initialTemplate, cleanupAnchor])
 
   const handleColumnSelect = (column: ColumnMeta) => {
     if (!editor) return
 
     if (mentionTriggerPos !== null) {
       // Insert new variable from @ trigger
-      // First, remove the @ character
+      // First, remove the @ character and any interim filter text
+      const selectionFrom = editor.state.selection.from
+      const deletionEnd = Math.max(selectionFrom, mentionTriggerPos + 1)
       editor.commands.deleteRange({
         from: mentionTriggerPos,
-        to: mentionTriggerPos + 1,
+        to: deletionEnd,
       })
 
       // Generate variable ID once
@@ -187,10 +268,13 @@ export function PromptComposer({
         .focus()
         .insertVariable({
           id: varId,
-          displayName: column.displayName,
-          tooltip: `Column: ${column.displayName}`,
+          displayName: column.label ?? column.displayName,
+          tooltip: `Column: ${column.label ?? column.displayName}`,
+          required: false,
+          defaultValue: null,
           mappedColumnId: column.id,
-          mappedColumnName: column.displayName,
+          mappedColumnName: column.label ?? column.displayName,
+          mappedColumnSlug: column.slug,
         })
         .run()
 
@@ -203,7 +287,9 @@ export function PromptComposer({
       // Update existing variable mapping
       editor.commands.updateVariable(activeVariableId, {
         mappedColumnId: column.id,
-        mappedColumnName: column.displayName,
+        mappedColumnName: column.label ?? column.displayName,
+        mappedColumnSlug: column.slug,
+        defaultValue: null,
       })
 
       setMappings(prev => ({
@@ -214,10 +300,7 @@ export function PromptComposer({
 
     // Clean up
     setComboboxOpen(false)
-    if (comboboxAnchor && comboboxAnchor.parentElement === document.body) {
-      document.body.removeChild(comboboxAnchor)
-    }
-    setComboboxAnchor(null)
+    cleanupAnchor()
     setActiveVariableId(null)
     setMentionTriggerPos(null)
   }
@@ -227,17 +310,25 @@ export function PromptComposer({
 
     // If this was from @ trigger, remove the @ character
     if (mentionTriggerPos !== null && editor) {
-      editor.commands.deleteRange({
-        from: mentionTriggerPos,
-        to: mentionTriggerPos + 1,
-      })
+      const charAtTrigger = editor.state.doc.textBetween(
+        mentionTriggerPos,
+        mentionTriggerPos + 1,
+        undefined,
+        ''
+      )
+      const selectionFrom = editor.state.selection.from
+      const deletionEnd = Math.max(selectionFrom, mentionTriggerPos + 1)
+
+      if (charAtTrigger === '@' || mentionTriggerPos < selectionFrom) {
+        editor.commands.deleteRange({
+          from: mentionTriggerPos,
+          to: deletionEnd,
+        })
+      }
     }
 
     setComboboxOpen(false)
-    if (comboboxAnchor && comboboxAnchor.parentElement === document.body) {
-      document.body.removeChild(comboboxAnchor)
-    }
-    setComboboxAnchor(null)
+    cleanupAnchor()
     setActiveVariableId(null)
     setMentionTriggerPos(null)
   }
@@ -247,7 +338,7 @@ export function PromptComposer({
     return () => {
       console.log('[PromptComposer] Unmounting - cleaning up combobox')
       if (comboboxAnchor && comboboxAnchor.parentElement === document.body) {
-        document.body.removeChild(comboboxAnchor)
+        comboboxAnchor.remove()
       }
     }
   }, [comboboxAnchor])
@@ -282,9 +373,19 @@ export function PromptComposer({
   }, [comboboxOpen])
 
   // Get validation info
-  const validationResult = editor
-    ? serializePrompt(editor.getJSON(), mappings)
-    : { prompt: '', unmappedVariables: [], isValid: true }
+  const docJSON = editor?.getJSON()
+  const validationResult = docJSON
+    ? serializePrompt(docJSON, mappings)
+    : {
+        prompt: '',
+        unmappedVariables: [],
+        isValid: true,
+        mappedVariableCount: 0,
+        totalVariableCount: 0,
+      }
+  const shouldWarnAboutUngrounded =
+    validationResult.totalVariableCount > 0 &&
+    validationResult.mappedVariableCount === 0
 
   return (
     <div className="space-y-4">
@@ -300,14 +401,21 @@ export function PromptComposer({
         </p>
       </div>
 
-      {validationResult.unmappedVariables.length > 0 && (
+      {(validationResult.unmappedVariables.length > 0 || shouldWarnAboutUngrounded) && (
         <div className="p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md">
-          <p className="text-sm text-yellow-800 dark:text-yellow-300 font-medium">
-            Map required fields:{' '}
-            {validationResult.unmappedVariables
-              .map(v => v.displayName)
-              .join(', ')}
-          </p>
+          {validationResult.unmappedVariables.length > 0 && (
+            <p className="text-sm text-yellow-800 dark:text-yellow-300 font-medium">
+              Map required fields:{' '}
+              {validationResult.unmappedVariables
+                .map(v => v.displayName)
+                .join(', ')}
+            </p>
+          )}
+          {shouldWarnAboutUngrounded && (
+            <p className="text-sm text-yellow-800 dark:text-yellow-300 font-medium mt-1">
+              No columns are mapped. This prompt will run as an ungrounded generation.
+            </p>
+          )}
         </div>
       )}
 

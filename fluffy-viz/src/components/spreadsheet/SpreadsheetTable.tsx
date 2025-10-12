@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Plus } from 'lucide-react'
+import { Plus, Loader2 } from 'lucide-react'
 import type { Column, SpreadsheetData } from './SpreadsheetEditor'
 import { getTemplateGroups } from '@/config/ai-column-templates'
 import {
@@ -12,6 +12,12 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 
 interface SpreadsheetTableProps {
   data: SpreadsheetData[]
@@ -19,6 +25,7 @@ interface SpreadsheetTableProps {
   onAddColumn: () => void
   onCellChange: (rowIndex: number, columnId: string, value: any) => void
   onColumnTemplateSelect: (template: string) => void
+  loadingCells?: Set<string>
 }
 
 // Get template groups with hierarchy
@@ -39,7 +46,8 @@ export function SpreadsheetTable({
   columns,
   onAddColumn,
   onCellChange,
-  onColumnTemplateSelect
+  onColumnTemplateSelect,
+  loadingCells = new Set()
 }: SpreadsheetTableProps) {
   const [editingCell, setEditingCell] = useState<{row: number, col: string} | null>(null)
   const [editValue, setEditValue] = useState('')
@@ -181,12 +189,33 @@ export function SpreadsheetTable({
             </th>
             {visibleColumns.map((column) => (
               <th key={`name-${column.id}`} className="border border-border bg-muted text-left">
-                <button className="w-full p-3 text-left hover:bg-accent hover:text-accent-foreground transition-colors">
-                  <div className="flex flex-col">
-                    <span className="font-medium text-foreground">{column.name}</span>
-                    <span className="text-xs text-muted-foreground">{column.type}</span>
-                  </div>
-                </button>
+                {column.isAIGenerated && column.metadata?.prompt ? (
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button className="w-full p-3 text-left hover:bg-accent hover:text-accent-foreground transition-colors">
+                          <div className="flex flex-col">
+                            <span className="font-medium text-foreground">{column.name}</span>
+                            <span className="text-xs text-muted-foreground">{column.type}</span>
+                          </div>
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" className="max-w-md">
+                        <div className="space-y-1">
+                          <p className="font-semibold text-xs">Prompt:</p>
+                          <p className="text-xs whitespace-pre-wrap">{column.metadata.prompt}</p>
+                        </div>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                ) : (
+                  <button className="w-full p-3 text-left hover:bg-accent hover:text-accent-foreground transition-colors">
+                    <div className="flex flex-col">
+                      <span className="font-medium text-foreground">{column.name}</span>
+                      <span className="text-xs text-muted-foreground">{column.type}</span>
+                    </div>
+                  </button>
+                )}
               </th>
             ))}
             <th className="border border-border bg-muted"></th>
@@ -217,7 +246,11 @@ export function SpreadsheetTable({
                     dragRange && dragRange.col === column.id && rowIndex >= dragRange.startRow && rowIndex <= dragRange.endRow ? 'bg-primary/20' : ''
                   }`}>
                     <div className="flex-1 px-2 pt-2">
-                      {editingCell?.row === rowIndex && editingCell?.col === column.id ? (
+                      {loadingCells.has(`${rowIndex}-${column.id}`) ? (
+                        <div className="flex items-center justify-center w-full h-full min-h-[80px]">
+                          <Loader2 className="w-5 h-5 animate-spin text-primary" />
+                        </div>
+                      ) : editingCell?.row === rowIndex && editingCell?.col === column.id ? (
                         <textarea
                           value={editValue}
                           onChange={(e) => setEditValue(e.target.value)}

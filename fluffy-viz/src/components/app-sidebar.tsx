@@ -30,9 +30,11 @@ import {
 import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
 import { AIProviderConfigDemo } from "@/components/ai-provider-config-demo"
+import { useHasConfiguredProviders } from "@/hooks/use-provider-config"
 
 export function AppSidebar() {
   const { files, fileCount, deleteFile, clearAllFiles, renameFile } = useFileStorage()
+  const hasConfiguredProviders = useHasConfiguredProviders()
   const [deleteAllDialogOpen, setDeleteAllDialogOpen] = useState(false)
   const [renameDialogOpen, setRenameDialogOpen] = useState(false)
   const [fileToRename, setFileToRename] = useState<StoredFile | null>(null)
@@ -243,8 +245,9 @@ export function AppSidebar() {
               className="w-full bg-primary text-primary-foreground"
               size="sm"
               onClick={() => setProviderDialogOpen(true)}
+              variant={hasConfiguredProviders ? "default" : "default"}
             >
-              Configure LLM Provider
+              {hasConfiguredProviders ? "Edit LLM Providers" : "Configure LLM Providers"}
             </Button>
           </div>
         </SidebarContent>

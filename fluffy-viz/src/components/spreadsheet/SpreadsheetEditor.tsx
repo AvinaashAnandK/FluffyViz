@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button'
 import { ArrowLeft, Download, Save, Loader2 } from 'lucide-react'
 import { generateColumnData } from '@/lib/ai-inference'
 import { parseFileContent } from '@/lib/format-parser'
+import Papa from 'papaparse'
 
 export interface Column {
   id: string
@@ -49,6 +50,7 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
   const [fileName, setFileName] = useState<string>('')
   const [generatingColumn, setGeneratingColumn] = useState<string | null>(null)
   const [generationProgress, setGenerationProgress] = useState({ current: 0, total: 0 })
+  const [loadingCells, setLoadingCells] = useState<Set<string>>(new Set())
 
   // Load file data on mount
   useEffect(() => {
@@ -136,33 +138,52 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
     setGeneratingColumn(column.id)
     setGenerationProgress({ current: 0, total: data.length })
 
+    // Mark all cells in this column as loading
+    const initialLoadingCells = new Set<string>()
+    data.forEach((_, rowIndex) => {
+      initialLoadingCells.add(`${rowIndex}-${column.id}`)
+    })
+    setLoadingCells(initialLoadingCells)
+
     try {
       // Extract column references from prompt (e.g., {{column_name}})
       const columnReferences = extractColumnReferences(columnData.prompt)
 
-      // Generate data for all rows
-      const results = await generateColumnData(
+      // Generate data for all rows with cell-level updates
+      await generateColumnData(
         data,
         column.id,
         columnData.prompt,
         columnData.model,
         columnData.provider,
         columnReferences,
-        (current, total) => setGenerationProgress({ current, total })
-      )
+        (current, total) => setGenerationProgress({ current, total }),
+        (rowIndex, result) => {
+          // Update cell as soon as it completes
+          // Ensure LLM response is stored as plain string (prevent any parsing)
+          const cellValue = String(result.content || result.error || '[Error]')
 
-      // Update cells with generated content
-      const updatedData = data.map((row, index) => {
-        const result = results.get(index)
-        return {
-          ...row,
-          [column.id]: result?.content || result?.error || '[Error]'
+          setData(prev => {
+            const updated = [...prev]
+            updated[rowIndex] = {
+              ...updated[rowIndex],
+              [column.id]: cellValue
+            }
+            return updated
+          })
+
+          // Remove from loading set
+          setLoadingCells(prev => {
+            const next = new Set(prev)
+            next.delete(`${rowIndex}-${column.id}`)
+            return next
+          })
         }
-      })
-
-      setData(updatedData)
+      )
     } catch (error) {
       console.error('Error generating column data:', error)
+      // Clear all loading cells on error
+      setLoadingCells(new Set())
     } finally {
       setGeneratingColumn(null)
       setGenerationProgress({ current: 0, total: 0 })
@@ -186,17 +207,29 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
   }
 
   const handleSave = async () => {
-    // Convert data back to CSV format
+    // Convert data back to CSV format using PapaParse for proper escaping
     const csvContent = convertToCSV(data, columns)
     await saveFile(csvContent, fileName, 'csv', 'text/csv', fileId)
   }
 
   const convertToCSV = (data: SpreadsheetData[], columns: Column[]): string => {
-    const headers = columns.filter(col => col.visible).map(col => col.name)
+    const visibleColumns = columns.filter(col => col.visible)
+    const headers = visibleColumns.map(col => col.name)
+
+    // Map data to array of arrays with only visible columns
     const rows = data.map(row =>
-      columns.filter(col => col.visible).map(col => row[col.id] || '').join(',')
+      visibleColumns.map(col => {
+        const value = row[col.id]
+        // Ensure all values are strings to prevent any type coercion
+        return value != null ? String(value) : ''
+      })
     )
-    return [headers.join(','), ...rows].join('\n')
+
+    // Use PapaParse to properly escape CSV values (handles commas, quotes, newlines)
+    return Papa.unparse({
+      fields: headers,
+      data: rows
+    })
   }
 
   const handleExport = () => {
@@ -274,6 +307,7 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
               onAddColumn={() => setIsAddColumnModalOpen(true)}
               onCellChange={updateCellValue}
               onColumnTemplateSelect={setSelectedColumnTemplate}
+              loadingCells={loadingCells}
             />
           </CardContent>
 

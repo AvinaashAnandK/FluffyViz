@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { X } from 'lucide-react'
+import { useState, useEffect, useMemo } from 'react'
+import { X, AlertCircle } from 'lucide-react'
 import { ModelSelector } from './ModelSelector'
 import { ProviderSelector } from './ProviderSelector'
 import { PromptComposer } from './PromptComposer'
@@ -9,6 +9,7 @@ import { Model, ModelProvider } from '@/types/models'
 import { getDefaultProviderForModel } from '@/lib/providers'
 import { loadPromptConfig } from '@/config/ai-column-templates'
 import { ColumnMeta } from '@/lib/prompt-serializer'
+import { loadProviderSettings, getEnabledProviders, type ProviderSettings } from '@/config/provider-settings'
 
 interface AddColumnModalProps {
   isOpen: boolean
@@ -38,14 +39,45 @@ export function AddColumnModal({
   const [selectedModel, setSelectedModel] = useState<Model | undefined>(undefined)
   const [selectedProvider, setSelectedProvider] = useState<ModelProvider | undefined>(undefined)
   const [templateConfig, setTemplateConfig] = useState<any>(null)
+  const [providerConfig, setProviderConfig] = useState<ProviderSettings | null>(null)
+  const [loadingConfig, setLoadingConfig] = useState(true)
+
+  // Load provider configuration on mount
+  useEffect(() => {
+    loadProviderSettings()
+      .then(setProviderConfig)
+      .catch(error => {
+        console.error('Failed to load provider config:', error)
+        setProviderConfig(null)
+      })
+      .finally(() => setLoadingConfig(false))
+  }, [])
+
+  // Check if any providers are enabled
+  const enabledProviders = providerConfig ? getEnabledProviders(providerConfig) : []
+  const hasEnabledProviders = enabledProviders.length > 0
 
   // Convert available columns to ColumnMeta format
-  const columnsMeta: ColumnMeta[] = availableColumns.map(colName => ({
-    id: colName,
-    slug: colName,
-    displayName: colName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
-    preview: dataRows.length > 0 ? String(dataRows[0][colName] || '') : ''
-  }))
+  const columnsMeta: ColumnMeta[] = useMemo(() => {
+    const firstRow = dataRows[0] ?? {}
+
+    const toTitleCase = (value: string) =>
+      value
+        .replace(/[_-]+/g, ' ')
+        .replace(/\b\w/g, (char) => char.toUpperCase())
+
+    return availableColumns.map((columnSlug) => {
+      const exampleValue = firstRow?.[columnSlug]
+
+      return {
+        id: columnSlug,
+        slug: columnSlug,
+        displayName: columnSlug,
+        label: toTitleCase(columnSlug),
+        preview: exampleValue == null ? '' : String(exampleValue),
+      }
+    })
+  }, [availableColumns, dataRows])
 
   useEffect(() => {
     if (template) {
@@ -60,18 +92,14 @@ export function AddColumnModal({
     }
   }, [template])
 
-  const handleModelSelect = (model: Model) => {
-    setSelectedModel(model)
-    const defaultProvider = getDefaultProviderForModel(model.id)
-    if (defaultProvider) {
-      setSelectedProvider(defaultProvider)
-    } else {
-      setSelectedProvider(undefined)
-    }
-  }
-
   const handleProviderSelect = (provider: ModelProvider) => {
     setSelectedProvider(provider)
+    // Clear model selection when provider changes
+    setSelectedModel(undefined)
+  }
+
+  const handleModelSelect = (model: Model) => {
+    setSelectedModel(model)
   }
 
   const handlePromptChange = (newPrompt: string, isValid: boolean) => {
@@ -118,9 +146,41 @@ export function AddColumnModal({
           </button>
         </div>
 
+        {/* Loading State */}
+        {loadingConfig && (
+          <div className="flex flex-col items-center justify-center p-8 text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mb-4"></div>
+            <p className="text-sm text-gray-600 dark:text-gray-400">Loading configuration...</p>
+          </div>
+        )}
+
+        {/* Empty State - No Providers Configured */}
+        {!loadingConfig && !hasEnabledProviders && (
+          <div className="flex flex-col items-center justify-center p-8 text-center flex-1">
+            <AlertCircle className="h-12 w-12 text-gray-400 dark:text-gray-600 mb-4" />
+            <h3 className="text-lg font-semibold mb-2 text-gray-900 dark:text-gray-100">
+              No LLM Provider Configured
+            </h3>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-4 max-w-md">
+              To use AI-powered columns, you need to configure at least one LLM provider
+              with an API key.
+            </p>
+            <button
+              onClick={() => {
+                // TODO: Navigate to provider configuration
+                console.log('Navigate to provider config')
+              }}
+              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+            >
+              Add LLM Provider Keys
+            </button>
+          </div>
+        )}
+
         {/* Scrollable content */}
-        <div className="flex-1 overflow-y-auto">
-          <form onSubmit={handleSubmit} className="p-6 space-y-6">
+        {!loadingConfig && hasEnabledProviders && (
+          <div className="flex-1 overflow-y-auto">
+            <form onSubmit={handleSubmit} className="p-6 space-y-6">
             {/* Column Name */}
             <div>
               <label htmlFor="columnName" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
@@ -144,37 +204,39 @@ export function AddColumnModal({
               onPromptChange={handlePromptChange}
             />
 
-            {/* Model Selection */}
+            {/* Provider and Model Selection */}
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Model
+                  Provider ({enabledProviders.length} available)
+                </label>
+                <ProviderSelector
+                  selectedProvider={selectedProvider}
+                  onProviderSelect={handleProviderSelect}
+                  className="w-full"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Model {selectedProvider ? `(filtered by ${selectedProvider.displayName})` : ''}
                 </label>
                 <ModelSelector
                   selectedModel={selectedModel}
                   onModelSelect={handleModelSelect}
                   placeholder="Search and select a model..."
                   className="w-full"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Inference Provider
-                </label>
-                <ProviderSelector
-                  selectedProvider={selectedProvider}
-                  selectedModelId={selectedModel?.id}
-                  onProviderSelect={handleProviderSelect}
-                  className="w-full"
+                  filterByProvider={selectedProvider?.id}
                 />
               </div>
             </div>
           </form>
-        </div>
+          </div>
+        )}
 
         {/* Footer with buttons */}
-        <div className="p-6 border-t border-gray-200 dark:border-gray-800 space-y-2">
+        {!loadingConfig && hasEnabledProviders && (
+          <div className="p-6 border-t border-gray-200 dark:border-gray-800 space-y-2">
           <button
             type="submit"
             onClick={handleSubmit}
@@ -190,7 +252,8 @@ export function AddColumnModal({
           >
             Cancel
           </button>
-        </div>
+          </div>
+        )}
       </div>
     </div>
   )

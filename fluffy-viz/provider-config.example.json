@@ -1,0 +1,101 @@
+{
+  "$schema": "./provider-config.schema.json",
+  "version": "1.0.0",
+  "providers": {
+    "openai": {
+      "apiKey": "sk-proj-...",
+      "enabled": false,
+      "capabilities": {
+        "text": true,
+        "embedding": true,
+        "mmEmbedding": false
+      }
+    },
+    "anthropic": {
+      "apiKey": "sk-ant-...",
+      "enabled": false,
+      "capabilities": {
+        "text": true,
+        "embedding": false,
+        "mmEmbedding": false
+      }
+    },
+    "cohere": {
+      "apiKey": "",
+      "enabled": false,
+      "capabilities": {
+        "text": true,
+        "embedding": true,
+        "mmEmbedding": false
+      }
+    },
+    "groq": {
+      "apiKey": "",
+      "enabled": false,
+      "capabilities": {
+        "text": true,
+        "embedding": false,
+        "mmEmbedding": false
+      }
+    },
+    "together": {
+      "apiKey": "",
+      "enabled": false,
+      "capabilities": {
+        "text": true,
+        "embedding": false,
+        "mmEmbedding": false
+      }
+    },
+    "novita": {
+      "apiKey": "",
+      "enabled": false,
+      "capabilities": {
+        "text": true,
+        "embedding": false,
+        "mmEmbedding": false
+      }
+    },
+    "huggingface": {
+      "apiKey": "",
+      "enabled": false,
+      "capabilities": {
+        "text": true,
+        "embedding": true,
+        "mmEmbedding": true
+      }
+    },
+    "google": {
+      "apiKey": "",
+      "enabled": false,
+      "capabilities": {
+        "text": true,
+        "embedding": true,
+        "mmEmbedding": true
+      }
+    },
+    "mistral": {
+      "apiKey": "",
+      "enabled": false,
+      "capabilities": {
+        "text": true,
+        "embedding": true,
+        "mmEmbedding": false
+      }
+    },
+    "local": {
+      "apiKey": "",
+      "enabled": false,
+      "capabilities": {
+        "text": true,
+        "embedding": false,
+        "mmEmbedding": false
+      },
+      "baseUrl": "http://localhost:11434"
+    }
+  },
+  "defaults": {
+    "augmentation": "openai",
+    "embedding": "cohere"
+  }
+}

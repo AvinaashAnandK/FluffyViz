@@ -5,6 +5,7 @@ export interface ColumnMeta {
   id: string
   slug: string
   displayName: string
+  label?: string
   preview: string
 }
 
@@ -12,6 +13,8 @@ export interface SerializedPromptResult {
   prompt: string
   unmappedVariables: { id: string; displayName: string }[]
   isValid: boolean
+  mappedVariableCount: number
+  totalVariableCount: number
 }
 
 /**
@@ -23,6 +26,8 @@ export function serializePrompt(
 ): SerializedPromptResult {
   const unmappedVariables: { id: string; displayName: string }[] = []
   let prompt = ''
+  let mappedVariableCount = 0
+  let totalVariableCount = 0
 
   function traverseNode(node: JSONContent) {
     if (node.type === 'text') {
@@ -31,14 +36,27 @@ export function serializePrompt(
       const attrs = node.attrs as VariableNodeAttributes
       const mapping = mappings[attrs.id]
 
+      totalVariableCount += 1
+
       if (mapping && attrs.mappedColumnId) {
         // Mapped variable - use {{column_slug}} syntax
         prompt += `{{${mapping.slug}}}`
+        mappedVariableCount += 1
+      } else if (attrs.defaultValue != null) {
+        // Optional variable with default text
+        prompt += attrs.defaultValue
       } else {
         // Unmapped variable - track for validation
-        unmappedVariables.push({ id: attrs.id, displayName: attrs.displayName })
+        if (attrs.required !== false) {
+          unmappedVariables.push({
+            id: attrs.id,
+            displayName: attrs.displayName,
+          })
+        }
         prompt += `{{${attrs.displayName}}}`
       }
+    } else if (node.type === 'hardBreak') {
+      prompt += '\n'
     } else if (node.type === 'paragraph') {
       // Process paragraph content
       if (node.content) {
@@ -68,6 +86,8 @@ export function serializePrompt(
     prompt,
     unmappedVariables,
     isValid: unmappedVariables.length === 0,
+    mappedVariableCount,
+    totalVariableCount,
   }
 }
 
@@ -136,8 +156,11 @@ export function hydrateDocumentFromTemplate(
             id: templateVar.id,
             displayName: templateVar.display_name,
             tooltip: templateVar.tooltip,
+            required: templateVar.required,
+            defaultValue: templateVar.default ?? null,
             mappedColumnId: null,
-            mappedColumnName: null,
+            mappedColumnName: templateVar.default ?? null,
+            mappedColumnSlug: null,
           },
         })
       } else {

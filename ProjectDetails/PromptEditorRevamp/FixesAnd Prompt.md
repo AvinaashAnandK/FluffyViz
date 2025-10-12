@@ -19,16 +19,10 @@
 - **Prompt serialization fidelity (`src/lib/prompt-serializer.ts`)**
   - Emit line breaks for `hardBreak` nodes so Shift+Enter content survives in the preview/export.
 
+- **Template slug preservation (`src/components/spreadsheet/AddColumnModal.tsx`)**
+  - Stop humanizing column slugs before invoking the composer so search/count logic keeps raw identifiers while UI can still show friendly labels.
+
 - **Column preview formatting (`src/components/spreadsheet/AddColumnModal.tsx`)**
   - Replace `|| ''` with nullish coalescing for column previews so legitimate `0`/`false` values still display to the user.
 
----
-
-# Codex Implementation Prompt
-
-Implement all items in the fix plan above:
-1. Update `PromptComposer` to emit an initial `onPromptChange`, reset mappings when templates swap, hydrate defaults, clean up anchor spans, and expand the warning banner with the ungrounded-generation notice when no columns are mapped.
-2. Refactor the column combobox positioning/focus logic to follow the anchor while scrolling, clamp to the viewport, focus the search input, and ensure Escape closes it.
-3. Enhance the mention-trigger extension and handler so newline contexts work, and the dropdown cancels cleanly when `@` is removed; make sure any `@`-typed filter text doesn’t stay in the editor.
-4. Improve variable pill keyboard navigation and tooltip content to reflect the mapped slug.
-5. Teach `serializePrompt` to respect `hardBreak` nodes and adjust column-preview fallbacks to keep zero/false values visible.
+--

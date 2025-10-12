@@ -1,0 +1,685 @@
+# FluffyViz Model Registry
+# This file defines available models for each AI provider
+# Format: provider → type (text/embedding) → models array
+
+openai:
+  text:
+    # GPT-5 Series
+    - id: gpt-5
+      name: GPT-5
+      type: text
+      contextWindow: 128000
+      maxOutputTokens: 16384
+      description: Best model for coding and agentic tasks across domains
+      recommended: true
+
+    - id: gpt-5-mini
+      name: GPT-5 Mini
+      type: text
+      contextWindow: 128000
+      maxOutputTokens: 16384
+      description: Faster, cost-efficient version for well-defined tasks
+      recommended: true
+
+    - id: gpt-5-nano
+      name: GPT-5 Nano
+      type: text
+      contextWindow: 128000
+      maxOutputTokens: 16384
+      description: Fastest, most cost-efficient GPT-5 variant
+      recommended: false
+
+    - id: gpt-5-codex
+      name: GPT-5 Codex
+      type: text
+      contextWindow: 128000
+      maxOutputTokens: 16384
+      description: Optimized for agentic coding in Codex
+      recommended: false
+
+    - id: gpt-5-chat-latest
+      name: GPT-5 Chat
+      type: text
+      contextWindow: 128000
+      maxOutputTokens: 16384
+      description: GPT-5 model used in ChatGPT
+      recommended: true
+
+    # GPT-4.1 Series
+    - id: gpt-4.1
+      name: GPT-4.1
+      type: text
+      contextWindow: 128000
+      maxOutputTokens: 16384
+      description: Smartest non-reasoning model
+      recommended: true
+
+    - id: gpt-4.1-mini
+      name: GPT-4.1 Mini
+      type: text
+      contextWindow: 128000
+      maxOutputTokens: 16384
+      description: Smaller, faster version of GPT-4.1
+      recommended: false
+
+    - id: gpt-4.1-nano
+      name: GPT-4.1 Nano
+      type: text
+      contextWindow: 128000
+      maxOutputTokens: 16384
+      description: Fastest, most cost-efficient GPT-4.1 variant
+      recommended: false
+
+    # GPT-4o Series
+    - id: gpt-4o
+      name: GPT-4o
+      type: text
+      contextWindow: 128000
+      maxOutputTokens: 16384
+      description: Fast, intelligent, flexible model
+      recommended: true
+
+    - id: gpt-4o-mini
+      name: GPT-4o Mini
+      type: text
+      contextWindow: 128000
+      maxOutputTokens: 16384
+      description: Fast, affordable model for focused tasks
+      recommended: false
+
+    # O-Series Reasoning Models
+    - id: o3
+      name: o3
+      type: text
+      contextWindow: 128000
+      maxOutputTokens: 100000
+      description: Reasoning model for complex tasks
+      recommended: true
+
+    - id: o3-mini
+      name: o3-mini
+      type: text
+      contextWindow: 128000
+      maxOutputTokens: 65536
+      description: Compact reasoning model alternative
+      recommended: false
+
+    - id: o1
+      name: o1
+      type: text
+      contextWindow: 128000
+      maxOutputTokens: 100000
+      description: Previous generation reasoning model
+      recommended: false
+
+    - id: o1-mini
+      name: o1-mini
+      type: text
+      contextWindow: 128000
+      maxOutputTokens: 65536
+      description: Compact alternative to o1
+      recommended: false
+
+    - id: o4-mini
+      name: o4-mini
+      type: text
+      contextWindow: 128000
+      maxOutputTokens: 65536
+      description: Fast, cost-efficient reasoning model
+      recommended: false
+
+    # Codex
+    - id: codex-mini-latest
+      name: Codex Mini
+      type: text
+      contextWindow: 128000
+      maxOutputTokens: 16384
+      description: Fast reasoning model optimized for Codex CLI
+      recommended: false
+
+  embedding:
+    - id: text-embedding-3-large
+      name: Text Embedding 3 Large
+      type: embedding
+      dimensions: 3072
+      contextWindow: 8192
+      description: Most capable embedding model with highest performance
+      recommended: true
+
+    - id: text-embedding-3-small
+      name: Text Embedding 3 Small
+      type: embedding
+      dimensions: 1536
+      contextWindow: 8192
+      description: Efficient embedding model with good performance
+      recommended: true
+
+    - id: text-embedding-ada-002
+      name: Text Embedding Ada 002
+      type: embedding
+      dimensions: 1536
+      contextWindow: 8192
+      description: Previous generation embedding model
+      recommended: false
+      
+anthropic:
+  text:
+    - id: claude-3-5-sonnet-20241022
+      name: Claude 3.5 Sonnet
+      type: text
+      contextWindow: 200000
+      maxOutputTokens: 8192
+      description: Best balance of intelligence and speed
+      recommended: true
+
+    - id: claude-3-5-haiku-20241022
+      name: Claude 3.5 Haiku
+      type: text
+      contextWindow: 200000
+      maxOutputTokens: 8192
+      description: Fastest model for light tasks
+      recommended: true
+
+    - id: claude-3-opus-20240229
+      name: Claude 3 Opus
+      type: text
+      contextWindow: 200000
+      maxOutputTokens: 4096
+      description: Most capable, complex reasoning
+      recommended: false
+
+  embedding: []
+
+google:
+  text:
+    # Gemini 2.5 Series
+    - id: gemini-2.5-pro
+      name: Gemini 2.5 Pro
+      type: text
+      contextWindow: 200000
+      maxOutputTokens: 8192
+      description: Most advanced reasoning model, best for coding and complex tasks
+      recommended: true
+
+    - id: gemini-2.5-flash
+      name: Gemini 2.5 Flash
+      type: text
+      contextWindow: 1048576
+      maxOutputTokens: 8192
+      description: Balanced reasoning model with 1M context and thinking budgets
+      recommended: true
+
+    - id: gemini-2.5-flash-lite
+      name: Gemini 2.5 Flash-Lite
+      type: text
+      contextWindow: 1048576
+      maxOutputTokens: 8192
+      description: Most cost-effective option for high-volume usage
+      recommended: false
+
+    # Gemini 2.0 Series
+    - id: gemini-2.0-flash
+      name: Gemini 2.0 Flash
+      type: text
+      contextWindow: 1048576
+      maxOutputTokens: 8192
+      description: Well-rounded multimodal model for diverse tasks
+      recommended: true
+
+    - id: gemini-2.0-flash-lite
+      name: Gemini 2.0 Flash-Lite
+      type: text
+      contextWindow: 1048576
+      maxOutputTokens: 8192
+      description: Budget-friendly model for scale deployments
+      recommended: false
+
+    # Gemma Series (Open Models)
+    - id: gemma-3-27b-it
+      name: Gemma 3 27B
+      type: text
+      contextWindow: 8192
+      maxOutputTokens: 8192
+      description: Large open model for complex multimodal tasks
+      recommended: false
+
+    - id: gemma-3-12b-it
+      name: Gemma 3 12B
+      type: text
+      contextWindow: 8192
+      maxOutputTokens: 8192
+      description: Medium open model for complex multimodal tasks
+      recommended: false
+
+    - id: gemma-3-4b-it
+      name: Gemma 3 4B
+      type: text
+      contextWindow: 8192
+      maxOutputTokens: 8192
+      description: Fast open model with vision and text support
+      recommended: false
+
+    - id: gemma-3-1b-it
+      name: Gemma 3 1B
+      type: text
+      contextWindow: 8192
+      maxOutputTokens: 8192
+      description: Compact open model optimized for text-only tasks
+      recommended: false
+
+  embedding:
+    - id: gemini-embedding-001
+      name: Gemini Embedding 001
+      type: embedding
+      dimensions: 768
+      description: Standard embedding model with adjustable dimensions
+      recommended: true
+
+mistral:
+  text:
+    - id: mistral-large-latest
+      name: Mistral Large
+      type: text
+      contextWindow: 128000
+      maxOutputTokens: 4096
+      description: Flagship model for complex tasks
+      recommended: true
+
+    - id: mistral-small-latest
+      name: Mistral Small
+      type: text
+      contextWindow: 32000
+      maxOutputTokens: 4096
+      description: Cost-effective for simple tasks
+      recommended: true
+
+    - id: codestral-latest
+      name: Codestral
+      type: text
+      contextWindow: 32000
+      maxOutputTokens: 4096
+      description: Specialized for coding
+      recommended: false
+
+  embedding:
+    - id: mistral-embed
+      name: Mistral Embed
+      type: embedding
+      dimensions: 1024
+      description: Mistral embedding model
+      recommended: true
+
+cohere:
+  text:
+    # Command A Series
+    - id: command-a-03-2025
+      name: Command A
+      type: text
+      contextWindow: 262144
+      maxOutputTokens: 8192
+      description: Top-performing model for tool use, agents, RAG, and multilingual tasks with high throughput
+      recommended: true
+
+    - id: command-a-translate-08-2025
+      name: Command A Translate
+      type: text
+      contextWindow: 8192
+      maxOutputTokens: 8192
+      description: Advanced translation model supporting 23 languages
+      recommended: false
+
+    - id: command-a-reasoning-08-2025
+      name: Command A Reasoning
+      type: text
+      contextWindow: 262144
+      maxOutputTokens: 32768
+      description: First reasoning model with enhanced problem-solving capabilities across 23 languages
+      recommended: true
+
+    - id: command-a-vision-07-2025
+      name: Command A Vision
+      type: text
+      contextWindow: 131072
+      maxOutputTokens: 8192
+      description: Multimodal model for analyzing charts, graphs, OCR, and document Q&A in 6 languages
+      recommended: true
+
+    # Command R Series
+    - id: command-r7b-12-2024
+      name: Command R7B
+      type: text
+      contextWindow: 131072
+      maxOutputTokens: 4096
+      description: Compact and fast model for RAG, tool use, and complex reasoning tasks
+      recommended: true
+
+    - id: command-r-08-2024
+      name: Command R
+      type: text
+      contextWindow: 131072
+      maxOutputTokens: 4096
+      description: Updated general-purpose model for various enterprise tasks
+      recommended: false
+
+    - id: command-r-plus-08-2024
+      name: Command R+
+      type: text
+      contextWindow: 131072
+      maxOutputTokens: 4096
+      description: Enhanced version with improved capabilities
+      recommended: false
+
+    # Aya Series (Open Models)
+    - id: c4ai-aya-expanse-8b
+      name: Aya Expanse 8B
+      type: text
+      contextWindow: 8192
+      maxOutputTokens: 4096
+      description: High-performance multilingual model serving 23 languages
+      recommended: false
+
+    - id: c4ai-aya-expanse-32b
+      name: Aya Expanse 32B
+      type: text
+      contextWindow: 131072
+      maxOutputTokens: 4096
+      description: Large multilingual model with enhanced performance across 23 languages
+      recommended: false
+
+    - id: c4ai-aya-vision-8b
+      name: Aya Vision 8B
+      type: text
+      contextWindow: 16384
+      maxOutputTokens: 4096
+      description: Fast multimodal model with low latency for text and image tasks
+      recommended: false
+
+    - id: c4ai-aya-vision-32b
+      name: Aya Vision 32B
+      type: text
+      contextWindow: 16384
+      maxOutputTokens: 4096
+      description: Advanced multimodal model with state-of-the-art multilingual capabilities
+      recommended: false
+
+  embedding:
+    - id: embed-v4.0
+      name: Embed v4.0
+      type: embedding
+      dimensions: 1536
+      description: Latest embedding model supporting text, images, and mixed content
+      recommended: true
+
+    - id: embed-english-v3.0
+      name: Embed English v3.0
+      type: embedding
+      dimensions: 1024
+      description: English-only embedding model for text classification
+      recommended: false
+
+    - id: embed-english-light-v3.0
+      name: Embed English Light v3.0
+      type: embedding
+      dimensions: 384
+      description: Faster, lightweight English embedding model
+      recommended: false
+
+    - id: embed-multilingual-v3.0
+      name: Embed Multilingual v3.0
+      type: embedding
+      dimensions: 1024
+      description: Multilingual embedding support for diverse languages
+      recommended: false
+
+    - id: embed-multilingual-light-v3.0
+      name: Embed Multilingual Light v3.0
+      type: embedding
+      dimensions: 384
+      description: Faster multilingual embedding model
+      recommended: false
+
+groq:
+  text:
+    # Groq Compound Series
+    - id: groq/compound
+      name: Compound
+      type: text
+      contextWindow: 8192
+      maxOutputTokens: 8192
+      description: High-performance model with unlimited daily tokens
+      recommended: true
+
+    - id: groq/compound-mini
+      name: Compound Mini
+      type: text
+      contextWindow: 8192
+      maxOutputTokens: 8192
+      description: Compact version with unlimited daily tokens
+      recommended: true
+
+    # Meta Llama Series
+    - id: llama-3.3-70b-versatile
+      name: Llama 3.3 70B Versatile
+      type: text
+      contextWindow: 32768
+      maxOutputTokens: 8192
+      description: Large versatile model for diverse tasks
+      recommended: true
+
+    - id: llama-3.1-8b-instant
+      name: Llama 3.1 8B Instant
+      type: text
+      contextWindow: 131072
+      maxOutputTokens: 8192
+      description: Fast and efficient model for quick responses
+      recommended: false
+
+    - id: meta-llama/llama-4-maverick-17b-128e-instruct
+      name: Llama 4 Maverick 17B
+      type: text
+      contextWindow: 131072
+      maxOutputTokens: 8192
+      description: Advanced instruction-following model with extended context
+      recommended: false
+
+    - id: meta-llama/llama-4-scout-17b-16e-instruct
+      name: Llama 4 Scout 17B
+      type: text
+      contextWindow: 16384
+      maxOutputTokens: 8192
+      description: Efficient instruction model for various tasks
+      recommended: false
+
+    # Safety and Moderation Models
+    - id: meta-llama/llama-guard-4-12b
+      name: Llama Guard 4 12B
+      type: text
+      contextWindow: 8192
+      maxOutputTokens: 4096
+      description: Content moderation and safety model
+      recommended: false
+
+    - id: meta-llama/llama-prompt-guard-2-22m
+      name: Llama Prompt Guard 2 22M
+      type: text
+      contextWindow: 8192
+      maxOutputTokens: 4096
+      description: Lightweight prompt injection detection
+      recommended: false
+
+    - id: meta-llama/llama-prompt-guard-2-86m
+      name: Llama Prompt Guard 2 86M
+      type: text
+      contextWindow: 8192
+      maxOutputTokens: 4096
+      description: Enhanced prompt injection detection
+      recommended: false
+
+    # Moonshot AI Series
+    - id: moonshotai/kimi-k2-instruct
+      name: Kimi K2 Instruct
+      type: text
+      contextWindow: 131072
+      maxOutputTokens: 8192
+      description: Advanced instruction-following model
+      recommended: false
+
+    - id: moonshotai/kimi-k2-instruct-0905
+      name: Kimi K2 Instruct (09-05)
+      type: text
+      contextWindow: 131072
+      maxOutputTokens: 8192
+      description: Updated version with improved performance
+      recommended: false
+
+    # OpenAI Community Models
+    - id: openai/gpt-oss-120b
+      name: GPT OSS 120B
+      type: text
+      contextWindow: 8192
+      maxOutputTokens: 8192
+      description: Large open-source style model
+      recommended: false
+
+    - id: openai/gpt-oss-20b
+      name: GPT OSS 20B
+      type: text
+      contextWindow: 8192
+      maxOutputTokens: 8192
+      description: Medium open-source style model
+      recommended: false
+
+    # Qwen Series
+    - id: qwen/qwen3-32b
+      name: Qwen3 32B
+      type: text
+      contextWindow: 32768
+      maxOutputTokens: 8192
+      description: High-capacity model for complex reasoning
+      recommended: false
+
+    # Legacy Models
+    - id: allam-2-7b
+      name: Allam 2 7B
+      type: text
+      contextWindow: 8192
+      maxOutputTokens: 4096
+      description: Efficient model for general tasks
+      recommended: false
+
+  embedding: []
+
+together:
+  text:
+    - id: meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo
+      name: Llama 3.1 70B Turbo
+      type: text
+      contextWindow: 131072
+      maxOutputTokens: 4096
+      description: Fast Llama inference
+      recommended: true
+
+    - id: mistralai/Mixtral-8x7B-Instruct-v0.1
+      name: Mixtral 8x7B Instruct
+      type: text
+      contextWindow: 32768
+      maxOutputTokens: 4096
+      description: Powerful MoE model
+      recommended: true
+
+    - id: Qwen/Qwen2.5-72B-Instruct-Turbo
+      name: Qwen 2.5 72B Turbo
+      type: text
+      contextWindow: 131072
+      maxOutputTokens: 4096
+      description: Strong multilingual support
+      recommended: false
+
+  embedding: []
+
+huggingface:
+  text:
+    # Recommended instruction-following models
+    - id: meta-llama/Llama-3.1-8B-Instruct
+      name: Llama 3.1 8B Instruct
+      type: text
+      contextWindow: 128000
+      maxOutputTokens: 4096
+      description: General Q&A and sentiment analysis
+      recommended: true
+
+    - id: mistralai/Mixtral-8x7B-Instruct-v0.1
+      name: Mixtral 8x7B Instruct
+      type: text
+      contextWindow: 32768
+      maxOutputTokens: 4096
+      description: Complex NLP, translation
+      recommended: true
+
+    - id: Qwen/Qwen2.5-72B-Instruct
+      name: Qwen 2.5 72B Instruct
+      type: text
+      contextWindow: 131072
+      maxOutputTokens: 4096
+      description: Multilingual (29+ languages)
+      recommended: true
+
+    - id: Qwen/Qwen2.5-Coder-32B-Instruct
+      name: Qwen 2.5 Coder 32B
+      type: text
+      contextWindow: 131072
+      maxOutputTokens: 4096
+      description: Code generation and reasoning
+      recommended: true
+
+    - id: mistralai/Mistral-Nemo-Instruct-2407
+      name: Mistral Nemo 12B
+      type: text
+      contextWindow: 128000
+      maxOutputTokens: 4096
+      description: Real-time dialogue
+      recommended: false
+
+  embedding:
+    # Top MTEB leaderboard models
+    - id: nvidia/NV-Embed-v2
+      name: NV-Embed v2
+      type: embedding
+      dimensions: 4096
+      description: MTEB #1 (72.31 score), generalist
+      recommended: true
+
+    - id: BAAI/bge-large-en-v1.5
+      name: BGE Large EN v1.5
+      type: embedding
+      dimensions: 1024
+      description: Excellent for English RAG
+      recommended: true
+
+    - id: BAAI/bge-base-en-v1.5
+      name: BGE Base EN v1.5
+      type: embedding
+      dimensions: 768
+      description: Balanced performance/speed
+      recommended: true
+
+    - id: BAAI/bge-m3
+      name: BGE M3
+      type: embedding
+      dimensions: 1024
+      description: Multilingual support
+      recommended: true
+
+    - id: sentence-transformers/all-mpnet-base-v2
+      name: All MPNet Base v2
+      type: embedding
+      dimensions: 768
+      description: General purpose embeddings
+      recommended: false
+
+    - id: sentence-transformers/all-MiniLM-L6-v2
+      name: All MiniLM L6 v2
+      type: embedding
+      dimensions: 384
+      description: Fast and lightweight
+      recommended: false
