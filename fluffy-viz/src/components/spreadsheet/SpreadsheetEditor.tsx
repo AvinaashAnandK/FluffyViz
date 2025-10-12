@@ -3,8 +3,10 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { SpreadsheetTable } from './SpreadsheetTable'
 import { AddColumnModal } from './AddColumnModal'
+import { AgentTraceViewer } from '@/components/embedding-viewer/agent-trace-viewer'
 import { Model, ModelProvider } from '@/types/models'
 import { useFileStorage } from '@/hooks/use-file-storage'
 import { Button } from '@/components/ui/button'
@@ -51,6 +53,7 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
   const [generatingColumn, setGeneratingColumn] = useState<string | null>(null)
   const [generationProgress, setGenerationProgress] = useState({ current: 0, total: 0 })
   const [loadingCells, setLoadingCells] = useState<Set<string>>(new Set())
+  const [activeTab, setActiveTab] = useState<'spreadsheet' | 'embeddings'>('spreadsheet')
 
   // Load file data on mount
   useEffect(() => {
@@ -289,52 +292,87 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
           </div>
         </div>
 
-        {/* Spreadsheet Card with integrated drawer */}
-        <Card className="rounded-2xl shadow-sm relative overflow-hidden">
-          <CardHeader>
-            <CardTitle className="font-sans">Spreadsheet Editor</CardTitle>
-          </CardHeader>
+        {/* Tabs for Spreadsheet and Agent Trace Viewer */}
+        <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'spreadsheet' | 'embeddings')} className="w-full">
+          <TabsList>
+            <TabsTrigger value="spreadsheet">Spreadsheet</TabsTrigger>
+            <TabsTrigger value="embeddings">Agent Trace Viewer</TabsTrigger>
+          </TabsList>
 
-          {/* Content area that shifts left when drawer opens */}
-          <CardContent
-            className={`transition-all duration-300 ease-in-out ${
-              isAddColumnModalOpen ? 'mr-[440px]' : 'mr-0'
-            }`}
-          >
-            <SpreadsheetTable
-              data={data}
-              columns={columns}
-              onAddColumn={() => setIsAddColumnModalOpen(true)}
-              onCellChange={updateCellValue}
-              onColumnTemplateSelect={setSelectedColumnTemplate}
-              loadingCells={loadingCells}
-            />
-          </CardContent>
+          <TabsContent value="spreadsheet" className="mt-4">
+            {/* Spreadsheet Card with integrated drawer */}
+            <Card className="rounded-2xl shadow-sm relative overflow-hidden">
+              <CardHeader>
+                <CardTitle className="font-sans">Spreadsheet Editor</CardTitle>
+              </CardHeader>
 
-          {/* Backdrop - only covers the card */}
-          {isAddColumnModalOpen && (
-            <div
-              className="absolute inset-0 bg-black/30 transition-opacity duration-300 z-40"
-              onClick={() => {
-                setIsAddColumnModalOpen(false)
-                setSelectedColumnTemplate(null)
-              }}
-            />
-          )}
+              {/* Content area that shifts left when drawer opens */}
+              <CardContent
+                className={`transition-all duration-300 ease-in-out ${
+                  isAddColumnModalOpen ? 'mr-[440px]' : 'mr-0'
+                }`}
+              >
+                <SpreadsheetTable
+                  data={data}
+                  columns={columns}
+                  onAddColumn={() => setIsAddColumnModalOpen(true)}
+                  onCellChange={updateCellValue}
+                  onColumnTemplateSelect={setSelectedColumnTemplate}
+                  loadingCells={loadingCells}
+                />
+              </CardContent>
 
-          {/* Drawer - slides in from right within card bounds */}
-          <AddColumnModal
-            isOpen={isAddColumnModalOpen}
-            onClose={() => {
-              setIsAddColumnModalOpen(false)
-              setSelectedColumnTemplate(null)
-            }}
-            onAddColumn={addColumn}
-            template={selectedColumnTemplate}
-            availableColumns={columns.map(col => col.name)}
-            dataRows={data}
-          />
-        </Card>
+              {/* Backdrop - only covers the card */}
+              {isAddColumnModalOpen && (
+                <div
+                  className="absolute inset-0 bg-black/30 transition-opacity duration-300 z-40"
+                  onClick={() => {
+                    setIsAddColumnModalOpen(false)
+                    setSelectedColumnTemplate(null)
+                  }}
+                />
+              )}
+
+              {/* Drawer - slides in from right within card bounds */}
+              <AddColumnModal
+                isOpen={isAddColumnModalOpen}
+                onClose={() => {
+                  setIsAddColumnModalOpen(false)
+                  setSelectedColumnTemplate(null)
+                }}
+                onAddColumn={addColumn}
+                template={selectedColumnTemplate}
+                availableColumns={columns.map(col => col.name)}
+                dataRows={data}
+              />
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="embeddings" className="mt-4">
+            <Card className="rounded-2xl shadow-sm h-[calc(100vh-250px)]">
+              <CardContent className="p-0 h-full">
+                <AgentTraceViewer
+                  fileId={fileId}
+                  data={{
+                    columns: columns.map(col => col.name),
+                    rows: data
+                  }}
+                  onDataUpdate={(updatedData) => {
+                    const columnNames = updatedData.columns;
+                    const newColumns: Column[] = columnNames.map(name => ({
+                      id: name,
+                      name,
+                      type: 'string',
+                      visible: true,
+                    }));
+                    setColumns(newColumns);
+                    setData(updatedData.rows as SpreadsheetData[]);
+                  }}
+                />
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
       </div>
     </div>
   )
