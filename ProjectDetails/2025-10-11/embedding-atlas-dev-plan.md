@@ -378,7 +378,8 @@ Embedding Atlas Integration - Feature Development Roadmap
   │                                             │
   │ Controls:                                   │
   │ Color by: [None ▼]                          │
-  │ Search: [______________] 🔍                 │
+  │ Search: [______________] 🔍 (disabled)      │
+  │   → Implemented in Feature 2                │
   │ [📷 Download PNG]                           │
   ├─────────────────────────────────────────────┤
   │ Detail Panel (appears on point click)       │
@@ -587,97 +588,23 @@ Embedding Atlas Integration - Feature Development Roadmap
   - [ ] Supports multiple embedding layers per file (dropdown to switch)
 
   ---
-  Feature 2: UMAP Projection & Atlas Viewer
+  Feature 2: Multi-Mode Search System
 
   What to Build
 
-  2D projection computation and interactive scatter plot
-
-  Technical Scope
-
-  // New files
-  src/lib/embeddings/
-  └── projection.ts         // UMAP wrapper + caching
-
-  src/components/visualization/
-  ├── AtlasViewer.tsx       // Wrapper around Atlas EmbeddingView
-  └── ProjectionConfig.tsx  // UMAP parameter controls
-
-  src/lib/atlas-integration.ts  // SpreadsheetData → Atlas format
-
-  // New route
-  src/app/visualize/[fileId]/page.tsx
-
-  // IndexedDB schema
-  interface ProjectionCache {
-    id: string                    // embeddingHash + method + params
-    method: 'umap' | 'tsne' | 'pca'
-    projections: {x: number, y: number}[]
-    params: UMAPParams
-    createdAt: Date
-  }
-
-  Atlas Components Used
-
-  import { createUMAP, EmbeddingView } from 'embedding-atlas'
-
-  // Fork decision: Use npm package first, fork only if needed
-
-  Key Implementation Details
-
-  Data Transformation Pipeline:
-  SpreadsheetData[]
-    → generate embeddings
-    → compute UMAP projection
-    → format for Atlas:
-        {
-          table: MosaicTable,    // Convert rows to Mosaic format
-          id: 'row_index',
-          text: 'user_input',    // Or selected column
-          projection: { x: 'proj_x', y: 'proj_y' }
-        }
-
-  UMAP Configuration:
-  const UMAP_DEFAULTS = {
-    n_neighbors: 15,
-    min_dist: 0.1,
-    metric: 'cosine',
-    n_components: 2
-  }
-
-  Integration Points
-
-  - Trigger: After Feature 1 completes, navigate to /visualize/[fileId]
-  - Input: Cached embeddings from Feature 1
-  - Output: Interactive scatter plot in new route
-
-  Acceptance Criteria
-
-  - UMAP computes 2D coordinates from embeddings
-  - Projections cached (reuse on reload)
-  - AtlasViewer renders scatter plot with zoom/pan
-  - Click point → shows original row data in tooltip
-  - Points colored by default (single color)
-  - UMAP parameters adjustable via UI (n_neighbors, min_dist)
-  - Handles 1000+ points smoothly (WebGPU rendering)
-  - Loading states for computation steps
-
-  ---
-  Feature 3: Dual Search System
-
-  What to Build
-
-  String keyword search + semantic similarity search
+  Three complementary search modes: string matching, fuzzy matching, and conceptual search
 
   Technical Scope
 
   // New files
   src/lib/search/
-  ├── string-search.ts      // FlexSearch integration
-  ├── semantic-search.ts    // Cosine similarity k-NN
+  ├── string-search.ts      // Exact string matching
+  ├── fuzzy-search.ts       // Fuzzy string matching (from Embedding Atlas)
+  ├── conceptual-search.ts  // Semantic similarity with query embedding
+  ├── similarity-search.ts  // k-NN from clicked point
   └── search-ui.tsx         // Unified search interface
 
-  // Add to AtlasViewer
+  // Add to Agent Trace Viewer
   <SearchInterface
     data={spreadsheetData}
     embeddings={embeddings}
@@ -686,49 +613,99 @@ Embedding Atlas Integration - Feature Development Roadmap
 
   Search Types
 
-  Type 1: String/Keyword Search
-  - Use Atlas's built-in FlexSearch or integrate separately
-  - Search across all text columns
-  - Highlight matching points on graph
+  **Type 1: String Search**
+  - **Exact matching**: Direct string match across text columns
+  - **Fuzzy matching**: Uses Embedding Atlas's fuzzy search capabilities
+  - Fast (<100ms)
+  - Highlights matching points on visualization
+  - Example: "refund" matches "refund", "refunds", "refunded" (fuzzy)
 
-  Type 2: Semantic Search
-  interface SemanticSearch {
-    // Embed query text → find k-NN
-    searchByText(query: string, k: number): number[]
+  **Type 2: Conceptual Search**
+  - User describes a concept in natural language
+  - System creates retrieval query embedding
+  - Computes semantic similarity against all conversations
+  - Returns results in descending order of relevance
+  - Example: "customer wants money back" finds refunds, returns, cancellations
+  - Slower (~1-2 seconds, requires embedding query text)
 
-    // Use clicked point's embedding for similarity
-    findSimilar(pointIndex: number, k: number): number[]
+  **Type 3: Find Similar (Context Menu)**
+  - Right-click any point → "Find Similar"
+  - Uses clicked conversation's embedding
+  - Finds k nearest neighbors in embedding space
+  - Shows top N similar conversations
+  - Example: Found edge case → find more like it
 
-    // Compute cosine similarity
-    cosineSimilarity(vec1: number[], vec2: number[]): number
+  Technical Implementation
+
+  ```typescript
+  interface SearchAPI {
+    // Type 1: String/Fuzzy
+    stringSearch(query: string, fuzzy: boolean): number[]
+
+    // Type 2: Conceptual
+    conceptualSearch(query: string, k: number): Promise<Array<{
+      index: number
+      similarity: number
+      text: string
+    }>>
+
+    // Type 3: Find Similar
+    findSimilar(pointIndex: number, k: number): Array<{
+      index: number
+      similarity: number
+    }>
   }
+  ```
 
   Performance Strategy:
+  - String/Fuzzy: Use Embedding Atlas's built-in search
+  - Conceptual: Embed query via API → k-NN on embeddings
   - Small datasets (<10k): Brute-force cosine similarity
   - Large datasets (>10k): Use Atlas's createKNN() or hnswlib-wasm
 
   Atlas Components Used
 
-  import { createKNN } from 'embedding-atlas'
+  ```typescript
+  import { createKNN, createFuzzySearch } from 'embedding-atlas'
 
-  // For large datasets
+  // Fuzzy string matching (Type 1)
+  const fuzzySearch = createFuzzySearch(textData)
+  const results = fuzzySearch.search('refnd') // Finds "refund"
+
+  // k-NN for similarity (Type 2 & 3)
   const knn = createKNN(embeddings, { metric: 'cosine' })
   const neighbors = knn.query(queryVector, k)
+  ```
+
+  UI Design Notes
+
+  Search bar will have mode selector (details to be specified during implementation):
+  - Mode toggle or tabs for Type 1 vs Type 2
+  - Type 3 accessible via right-click context menu on points
+  - Results displayed with relevance scores
+  - Visual highlighting on scatter plot
+  - Result list shows matched text snippets
 
   Integration Points
 
-  - UI Location: Search bar at top of AtlasViewer
-  - Outputs: Highlighted points on scatter plot + filtered table
+  - UI Location: Search bar in Agent Trace Viewer (replaces disabled placeholder from Feature 1)
+  - Input: User query (string) OR clicked point (for Type 3)
+  - Output: Highlighted points on scatter plot + result list panel
 
   Acceptance Criteria
 
-  - Search bar with mode toggle (String / Semantic)
-  - String search highlights matching points (<100ms latency)
-  - Semantic search embeds query → highlights k-NN
-  - Right-click point → "Find Similar" context menu
-  - Results show similarity scores
-  - Search results persist when zooming/panning
-  - Clear search button resets view
+  - [ ] Search bar enabled in Agent Trace Viewer
+  - [ ] Type 1: Exact string search works (<100ms latency)
+  - [ ] Type 1: Fuzzy string search using Embedding Atlas
+  - [ ] Type 2: Conceptual search embeds query → highlights k-NN
+  - [ ] Type 2: Results sorted by similarity score (descending)
+  - [ ] Type 3: Right-click point → "Find Similar" context menu
+  - [ ] Type 3: Shows top 10 similar conversations with scores
+  - [ ] Results highlight matching points on visualization
+  - [ ] Result panel shows matched conversations with metadata
+  - [ ] Search results persist when zooming/panning
+  - [ ] Clear button resets search state
+  - [ ] Loading states for Type 2 (embedding query takes time)
 
   ---
   Feature 4: Metadata Overlay System
@@ -1440,17 +1417,17 @@ Embedding Atlas Integration - Feature Development Roadmap
   Available imports:
   // React Components
   import {
-    EmbeddingAtlas,      // Full viewer (use in Feature 2)
-    EmbeddingView,       // Core scatter plot (use in Feature 2)
-    EmbeddingViewMosaic, // With Mosaic charts (use in Feature 4)
+    EmbeddingAtlas,      // Full viewer (use in Feature 1)
+    EmbeddingView,       // Core scatter plot (use in Feature 1)
+    EmbeddingViewMosaic, // With Mosaic charts (use in Feature 3)
     Table                // Data table (optional)
   } from 'embedding-atlas'
 
   // Algorithms
   import {
-    createUMAP,          // WASM UMAP (use in Feature 2)
-    createKNN,           // k-NN search (use in Feature 3)
-    findClusters         // Density clustering (use in Feature 5)
+    createUMAP,          // WASM UMAP (use in Feature 1)
+    createKNN,           // k-NN search (use in Feature 2)
+    findClusters         // Density clustering (use in Feature 4)
   } from 'embedding-atlas'
 
   From Forked Repository (If Customization Needed)
@@ -1488,17 +1465,135 @@ Embedding Atlas Integration - Feature Development Roadmap
 
   For agentic development, implement in this sequence to minimize blockers:
 
-  1. Feature 1 (Embedding System) - No dependencies
-  2. Feature 2 (UMAP + Atlas Viewer) - Depends on Feature 1
-  3. Feature 4 (Metadata Overlays) - Depends on Feature 2 (needs Atlas viewer)
-  4. Feature 3 (Search) - Depends on Features 1, 2 (needs embeddings + viewer)
-  5. Feature 5 (Clustering) - Depends on Features 1, 2 (needs embeddings + viewer)
-  6. Feature 6 (LLM Labeling) - Depends on Feature 5 (needs clusters)
-  7. Feature 7 (Boundary Detection) - Depends on Features 5, 6 (needs labeled clusters)
-  8. Feature 8 (Selection Sync) - Depends on Feature 2 (needs viewer + table)
-  9. Feature 9 (Export) - Depends on Features 2-7 (needs full visualization)
-  10. Feature 10 (Incremental Updates) - Depends on all (optimization layer)
+  1. Feature 1 (Agent Trace Viewer with Embedding System) - No dependencies, includes visualization
+  2. Feature 2 (Dual Search System) - Depends on Feature 1
+  3. Feature 3 (Metadata Overlays) - Depends on Feature 1
+  4. Feature 4 (Automated Clustering) - Depends on Feature 1
+  5. Feature 5 (LLM Labeling) - Depends on Feature 4
+  6. Feature 6 (Strategic Sampling) - Depends on Features 4, 5
+  7. Feature 7 (Selection Sync) - Depends on Feature 1 (optional)
+  8. Feature 8 (Export) - Depends on Features 1-6
+  9. Feature 9 (Incremental Updates) - Depends on all (optimization layer)
 
   Parallel Development Possible:
-  - Features 3, 4, 5 can be built simultaneously after Feature 2
-  - Features 8, 9 are independent and can be built anytime after Feature 2
+  - Features 2, 3, 4 can be built simultaneously after Feature 1
+  - Features 7, 8 are independent polish features
+
+  ---
+  ## Potential Future Additions
+
+  These features may be added based on user feedback and requirements.
+
+  ### Advanced UMAP Controls (Optional)
+
+  **What it would provide:**
+
+  Allow users to re-compute 2D coordinates with different UMAP parameters without regenerating embeddings.
+
+  **Technical Scope:**
+
+  ```typescript
+  // Add to Agent Trace Viewer
+  interface UMAPSettings {
+    n_neighbors: number;  // Default: 15
+    min_dist: number;     // Default: 0.1
+    metric: 'cosine' | 'euclidean';
+  }
+
+  // UI Component
+  <UMAPControlPanel
+    currentSettings={umapSettings}
+    onReproject={(newSettings) => {
+      // Re-run UMAP with new parameters
+      // Update coordinates2D in active layer
+    }}
+  />
+  ```
+
+  **When to build:**
+
+  - User feedback indicates default UMAP produces poor visualizations for their data
+  - Research/academic users need parameter sensitivity analysis
+  - Users explicitly request ability to tune projection
+
+  **Complexity cost:**
+
+  - Adds UI complexity (sliders, parameter explanations)
+  - Requires re-projection loading states
+  - Need to cache multiple projection variants per layer
+  - Educational burden: users must understand UMAP parameters
+
+  **Alternative solutions:**
+
+  - Create new embedding layer with different composition strategy
+  - Use color-by metadata to reveal patterns in existing visualization
+  - Rely on clustering (operates on raw embeddings, independent of projection)
+
+  **Decision:** Defer until user-requested. Focus on features that provide clear analytical value (search, clustering, labeling, boundary detection).
+
+  ---
+
+  ### Search Result Citation & Highlighting
+
+  **What it would provide:**
+
+  Enhanced search results that highlight the exact part of text showing relevance to the search query.
+
+  **Use Cases:**
+
+  - Conceptual search: Show which sentences/phrases matched the concept
+  - String search: Highlight matched keywords in context
+  - Find Similar: Explain why conversations are similar
+
+  **Technical Approach:**
+
+  ```typescript
+  interface SearchResultWithCitation {
+    index: number;
+    similarity: number;
+    text: string;
+    citations: Array<{
+      snippet: string;        // The relevant excerpt
+      startIndex: number;     // Position in full text
+      endIndex: number;
+      relevanceScore: number; // Why this part matched
+    }>;
+  }
+  ```
+
+  **Implementation Options:**
+
+  1. **Simple keyword highlighting**: Regex-based highlighting of matched terms
+  2. **Semantic highlighting**: Use attention scores from embedding model
+  3. **LLM-based explanation**: Ask LLM "Why is this result relevant to query X?"
+
+  **Example UI:**
+
+  ```
+  Search Results (23 matches for "billing issues")
+
+  ┌─────────────────────────────────────────┐
+  │ Result 1 (similarity: 0.87)             │
+  │ Conversation: session_xyz               │
+  │                                         │
+  │ "I need help with my account. The      │
+  │  [billing system charged me twice]     │ ← Highlighted
+  │  and I can't find how to dispute it."  │
+  │                                         │
+  │ Matched: "billing", "charged", "issue" │
+  └─────────────────────────────────────────┘
+  ```
+
+  **When to build:**
+
+  - After Feature 2 is working
+  - User feedback indicates search results need more context
+  - Users ask "Why did this result match?"
+
+  **Complexity cost:**
+
+  - Medium: Requires text analysis beyond simple matching
+  - May need additional API calls for LLM-based explanations
+  - UI needs to display highlighted snippets elegantly
+
+  **Decision:** Defer to post-MVP. Feature 2 provides functional search; citations are polish/UX enhancement.
