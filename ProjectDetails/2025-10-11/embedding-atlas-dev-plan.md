@@ -4,58 +4,587 @@ Embedding Atlas Integration - Feature Development Roadmap
   implementation:
 
   ---
-  Feature 1: Core Embedding System
+  Feature 1: Agent Trace Viewer with Embedding System
 
   What to Build
 
-  Embedding generation pipeline with multiple composition strategies
+  Complete embedding generation and visualization system with multiple composition strategies,
+  layer management, and interactive visualization. This is the foundation feature that enables
+  users to create multiple "views" of their conversational data through different embedding lenses.
 
-  Technical Scope
+  ## UI Entry Point
 
-  // New files
-  src/lib/embeddings/
-  ├── generator.ts           // API calls to OpenAI/Anthropic
-  ├── strategies.ts          // 6 composition strategies
-  ├── cache.ts              // IndexedDB caching layer
-  └── types.ts              // Embedding-related types
+  New tab in `/edit/[fileId]` page: **"Agent Trace Viewer"**
+  - Always visible (even when no embeddings exist)
+  - Empty state shows: "No Embedding Views Created Yet" with CTA button
+  - Once embeddings created: Shows interactive scatter plot + controls
 
-  // IndexedDB schema extension
-  interface EmbeddingCache {
-    id: string              // fileId + strategyHash
-    embeddings: number[][]
-    strategy: EmbeddingStrategy
-    model: string
-    createdAt: Date
+  ## Technical Architecture
+
+  ### Storage Strategy (Hybrid: IndexedDB + OPFS)
+
+  **IndexedDB** (for fast access):
+  - Stores metadata for ALL embedding layers
+  - Stores FULL data for ACTIVE layer only (currently selected in UI)
+  - Stores composed text as new columns in spreadsheet data
+
+  **OPFS (Origin Private File System)** (for large data):
+  - Stores full embedding data for INACTIVE layers
+  - Files named: `embedding_{layerId}.json`
+  - Loaded on-demand when user switches views (~200ms load time)
+  - No storage quota issues (several GB available)
+
+  ### Data Model
+
+  ```typescript
+  // IndexedDB Table: Files (extend existing)
+  interface StoredFile {
+    id: string;
+    name: string;
+    data: { columns: string[]; rows: any[][] };
+    // NEW FIELDS:
+    embeddingLayers: Array<{
+      id: string;
+      name: string; // User-friendly: "Conversation History View"
+      isActive: boolean; // Only one active at a time
+      pointCount: number;
+      compositionMode: 'single' | 'multi' | 'conversational';
+      createdAt: string;
+    }>;
+    embeddingCompositionColumns: string[]; // ["_embedding_composition_1", "_embedding_composition_2"]
+    nextCompositionColumnNumber: number; // For auto-incrementing column names
   }
 
-  Composition Strategies to Implement
+  // IndexedDB Table: ActiveEmbeddingLayer (new table)
+  interface ActiveEmbeddingLayer {
+    id: string; // "emb_abc123"
+    fileId: string;
+    name: string; // User-provided name
 
-  1. Turn-only: User: {input}\nAssistant: {response}
-  2. History-until-turn: All previous turns in conversation
-  3. Turn + History: Current turn with context header
-  4. Full conversation: All turns grouped by conversation_id
-  5. Judge reasoning: Embed LLM evaluation columns
-  6. Custom columns: User-selected column concatenation
+    // Generation config
+    provider: string; // "voyageai", "openai", "cohere"
+    model: string; // "voyage-3-lite", "text-embedding-3-small"
+    dimension: number; // 768, 1536, 3072, etc.
 
-  Integration Points
+    compositionMode: 'single' | 'multi' | 'conversational';
+    compositionConfig: {
+      // Single mode
+      sourceColumn?: string;
 
-  - Input: SpreadsheetData[] from existing file storage
-  - Output: number[][] (array of embedding vectors)
-  - UI Entry: New button in SpreadsheetEditor toolbar: "Generate Embeddings"
+      // Multi mode
+      columns?: string[];
+      separator?: string; // "\n", ", ", " | "
 
-  Atlas Components Used
+      // Conversational mode
+      conversationIdColumn?: string; // "session_id"
+      sequenceColumn?: string; // "timestamp"
+      strategy?: 'turn-only' | 'history-until' | 'turn-plus-n' | 'full-conversation';
+      contextSize?: number; // For "turn-plus-n"
+      turnFormatColumns?: string[]; // ["role", "message"]
+    };
 
-  - None yet - this is pure data preparation
+    // The actual embeddings + visualization data
+    points: Array<{
+      id: string; // "point_0"
+      embedding: number[]; // The vector [0.123, -0.456, ...]
+      coordinates2D: [number, number]; // Pre-computed UMAP/t-SNE
+      sourceRowIndices: number[]; // Maps to source file rows
+      label?: string; // For conversation-level: the conversation ID
+      composedText: string; // The text that was embedded
+      metadata?: Record<string, any>; // Aggregated metadata for conversation-level
+    }>;
 
-  Acceptance Criteria
+    // Metadata
+    createdAt: string;
+    lastAccessedAt: string;
+  }
 
-  - User clicks "Generate Embeddings" → modal opens
-  - Modal shows 6 strategy options with real-time preview
-  - Embeddings generate with progress indicator (reuse existing pattern)
-  - Results cached in IndexedDB
-  - Cache invalidation on file edits
-  - Model selector supports OpenAI text-embedding-3-small (default)
-  - Batch API calls (100 texts at a time) using Vercel SDK
+  // OPFS File Format (same structure as ActiveEmbeddingLayer)
+  // Filename: embedding_{layerId}.json
+  ```
+
+  ### Multi-Step Creation Wizard
+
+  **Step 0: Name Your View**
+  ```
+  View Name: [Conversation History Analysis________]
+  Description: User provides friendly name for this embedding layer
+  [Continue]
+  ```
+
+  **Step 1: Provider & Model Selection**
+  Pattern: Reuse existing test-generation page implementation
+  ```typescript
+  // Load providers with embedding capability
+  const embeddingProviders = getEnabledProviders(config)
+    .filter(provider => hasCapability(config, provider, 'embedding'));
+
+  // Filter models by selected provider
+  const filteredModels = getEmbeddingModelsForEnabledProviders([selectedProvider]);
+  ```
+  UI:
+  ```
+  Provider (3 available): [Voyage AI ▼]
+    ○ OpenAI
+    ○ Cohere
+    ● Voyage AI
+
+  Model (5 available): [voyage-3-lite ▼]
+    ○ voyage-3 (1024 dim)
+    ● voyage-3-lite (1536 dim)
+    ○ voyage-code-3 (1536 dim)
+
+  [Back] [Continue]
+  ```
+
+  **Step 2: Composition Mode**
+  ```
+  What to Embed?
+
+  ○ Single Column
+    Select one column to embed
+
+  ○ Multi-Column Concatenation
+    Combine multiple columns from current row
+
+  ● Conversational History
+    Aggregate turns across rows by session
+
+  [Back] [Continue]
+  ```
+
+  **Step 3A: Single Column Mode**
+  ```
+  Column: [user_message ▼]
+
+  Preview (first 3 rows):
+  ┌───────────────────────────────────────┐
+  │ 1. "How do I reset my password?"      │
+  │ 2. "What is your refund policy?"      │
+  │ 3. "I need help with API integration" │
+  └───────────────────────────────────────┘
+
+  [Back] [Continue]
+  ```
+
+  **Step 3B: Multi-Column Mode**
+  ```
+  Selected Columns (drag to reorder):
+  ┌───────────────────────────────────────┐
+  │ 1. ≡ role                      [×]    │
+  │ 2. ≡ message                   [×]    │
+  │ 3. ≡ metadata.topic            [×]    │
+  └───────────────────────────────────────┘
+
+  [+ Add Column]
+
+  Separator: [Newline ▼] (options: \n, ", ", " | ")
+
+  Preview (first row):
+  ┌───────────────────────────────────────┐
+  │ user                                  │
+  │ How do I reset my password?           │
+  │ account_management                    │
+  └───────────────────────────────────────┘
+
+  [Back] [Continue]
+  ```
+
+  **Step 3C: Conversational History Mode**
+  ```
+  Conversation Identifier: [session_id ▼]
+    Groups rows into conversations
+
+  Sequence Identifier: [timestamp ▼]
+    Orders turns within conversation
+
+  Aggregation Strategy:
+  ○ Turn only          (Just current row)
+  ○ History until turn (All turns up to current)
+  ● Turn plus N        (Current + N previous)
+    N = [━━●━━━━━━━] 3 turns
+  ○ Full conversation  (All turns in session)
+
+  Turn Format (columns to include per turn):
+  Selected: [role] [message]
+  Available: [+ sentiment] [+ topic] [+ intent]
+
+  Preview (session abc123, turn 3):
+  ┌───────────────────────────────────────┐
+  │ [Turn 1]                              │
+  │ role: user                            │
+  │ message: I need help with billing     │
+  │ ---                                   │
+  │ [Turn 2]                              │
+  │ role: assistant                       │
+  │ message: I can help with that         │
+  │ ---                                   │
+  │ [Turn 3] ← CURRENT                    │
+  │ role: user                            │
+  │ message: How do I cancel?             │
+  └───────────────────────────────────────┘
+
+  [Show Preview] [Back] [Continue]
+  ```
+
+  **Step 4: Review & Generate**
+  ```
+  Review Configuration
+
+  View Name: Conversation History Analysis
+  Provider: Voyage AI
+  Model: voyage-3-lite (1536 dimensions)
+
+  Composition:
+  • Mode: Conversational History
+  • Conversation ID: session_id
+  • Sequence: timestamp
+  • Strategy: Turn plus 3
+  • Turn Format: role, message
+
+  Estimated Output:
+  • ~150 embedding points (150 unique sessions)
+  • Storage size: ~6 MB
+
+  [Back] [Generate Embeddings]
+  ```
+
+  **Step 5: Generation Progress**
+  ```
+  Generating Embeddings...
+
+  Progress: [████████░░░░░░] 67% (100/150)
+
+  • Composing text: ✓ Complete
+  • Generating embeddings: Batch 2/3
+  • Computing UMAP coordinates: Pending
+  • Adding composition column: Pending
+
+  Elapsed: 45s  •  Est. remaining: 22s
+
+  [Cancel]
+  ```
+
+  ### Generation Pipeline
+
+  1. **Compose Text** (client-side)
+     ```typescript
+     // For turn-level (1:1)
+     const composedTexts = rows.map(row => composeText(row, config));
+
+     // For conversation-level (many:1)
+     const conversations = groupByConversation(rows, conversationIdColumn);
+     const composedTexts = conversations.map(conv =>
+       composeConversation(conv, config)
+     );
+     ```
+
+  2. **Batch Embed** (API call using AI SDK)
+     ```typescript
+     import { embed } from 'ai';
+
+     // Process in batches of 100
+     for (let i = 0; i < composedTexts.length; i += 100) {
+       const batch = composedTexts.slice(i, i + 100);
+       const { embeddings } = await embed({
+         model: voyageai.embedding('voyage-3-lite'),
+         values: batch
+       });
+       allEmbeddings.push(...embeddings);
+       updateProgress(i + batch.length, composedTexts.length);
+     }
+     ```
+
+  3. **Compute UMAP Coordinates** (using Embedding Atlas)
+     ```typescript
+     import { createUMAP } from 'embedding-atlas';
+
+     const umap = createUMAP(allEmbeddings, {
+       n_neighbors: 15,
+       min_dist: 0.1,
+       metric: 'cosine'
+     });
+     const coordinates2D = await umap.fit();
+     ```
+
+  4. **Add Composed Text Column** (for ALL embedding types)
+     ```typescript
+     // For turn-level (1:1): Each row gets its composed text
+     const columnName = `_embedding_composition_${nextNumber}`;
+     rows.forEach((row, i) => {
+       row[columnName] = composedTexts[i];
+     });
+
+     // For conversation-level (many:1): Duplicate composed text across all rows
+     points.forEach(point => {
+       point.sourceRowIndices.forEach(rowIdx => {
+         rows[rowIdx][columnName] = point.composedText;
+       });
+     });
+     ```
+
+  5. **Store in IndexedDB**
+     ```typescript
+     const embeddingLayer: ActiveEmbeddingLayer = {
+       id: generateId(),
+       fileId,
+       name: userProvidedName,
+       provider,
+       model,
+       dimension: embeddings[0].length,
+       compositionMode,
+       compositionConfig,
+       points: embeddings.map((emb, i) => ({
+         id: `point_${i}`,
+         embedding: emb,
+         coordinates2D: coordinates2D[i],
+         sourceRowIndices: getSourceRowIndices(i, compositionMode),
+         composedText: composedTexts[i],
+         label: compositionMode === 'conversational' ? conversationIds[i] : undefined
+       })),
+       createdAt: new Date().toISOString(),
+       lastAccessedAt: new Date().toISOString()
+     };
+
+     await saveActiveEmbeddingLayer(fileId, embeddingLayer);
+     ```
+
+  ### Agent Trace Viewer UI (After Generation)
+
+  ```
+  ┌─────────────────────────────────────────────┐
+  │ Agent Trace Viewer                          │
+  ├─────────────────────────────────────────────┤
+  │ Active View:                                │
+  │ [● Conversation History (150) ▼] [+New] [⋮] │
+  │                                             │
+  │ Dropdown shows:                             │
+  │ ● Conversation History (150 points)         │
+  │   Full conversations • voyage-3-lite        │
+  │   Created 2h ago                            │
+  │                                             │
+  │ ○ Turn-Level Analysis (1000 points)         │
+  │   Column: user_message • text-emb-3-small   │
+  │   Created 1d ago                            │
+  │                                             │
+  │ ○ Reasoning Clusters (1000 points)          │
+  │   LLM judge reasoning • voyage-3            │
+  │   Created 3h ago                            │
+  ├─────────────────────────────────────────────┤
+  │ [Interactive Scatter Plot]                  │
+  │ • 150 points displayed                      │
+  │ • Rendered with Embedding Atlas             │
+  │ • Pan/zoom enabled                          │
+  │                                             │
+  │ Controls:                                   │
+  │ Color by: [None ▼]                          │
+  │ Search: [______________] 🔍                 │
+  │ [📷 Download PNG]                           │
+  ├─────────────────────────────────────────────┤
+  │ Detail Panel (appears on point click)       │
+  │ ┌─────────────────────────────────────────┐ │
+  │ │ Conversation: session_abc123            │ │
+  │ │ Turns: 5  •  Duration: 15min            │ │
+  │ │                                         │ │
+  │ │ [Turn 1] user                           │ │
+  │ │ "I need help with billing"              │ │
+  │ │                                         │ │
+  │ │ [Turn 2] assistant                      │ │
+  │ │ "I can help with that"                  │ │
+  │ │                                         │ │
+  │ │ ... (3 more turns) ...                  │ │
+  │ │                                         │ │
+  │ │ [Expand Full Conversation]              │ │
+  │ └─────────────────────────────────────────┘ │
+  └─────────────────────────────────────────────┘
+  ```
+
+  **"⋮" Kebab Menu:**
+  - Edit Configuration
+  - Duplicate View
+  - Delete View
+  - Download Embedding Data (JSON)
+
+  ### Layer Switching Logic
+
+  **When user selects different layer from dropdown:**
+  1. Show loading overlay (~200ms)
+  2. Save current active layer to OPFS (if exists)
+  3. Delete current layer from IndexedDB ActiveEmbeddingLayer table
+  4. Load new layer from OPFS into memory
+  5. Store as active layer in IndexedDB
+  6. Update file metadata (mark new layer as active)
+  7. Render visualization with new data
+
+  ```typescript
+  async function switchEmbeddingLayer(newLayerId: string) {
+    setLoading(true);
+
+    const currentLayer = await getActiveEmbeddingLayer(fileId);
+    if (currentLayer) {
+      await saveLayerToOPFS(currentLayer);
+      await deleteActiveEmbeddingLayer(fileId);
+    }
+
+    const newLayer = await loadLayerFromOPFS(newLayerId);
+    await setActiveEmbeddingLayer(fileId, newLayer);
+    await updateFileEmbeddingMetadata(fileId, newLayerId);
+
+    setLoading(false);
+  }
+  ```
+
+  ### Color-By Metadata (For Conversational Embeddings)
+
+  **Aggregation computed on-demand:**
+  ```typescript
+  // When user selects "Color by: sentiment"
+  function colorByMetadata(column: string, points: Point[], rows: Row[]) {
+    points.forEach(point => {
+      // Get values from source rows
+      const values = point.sourceRowIndices.map(idx => rows[idx][column]);
+
+      // Aggregate based on type
+      const aggregated = isNumeric(values)
+        ? average(values) // For numeric: average
+        : mode(values);   // For categorical: most common
+
+      point.color = mapValueToColor(aggregated);
+    });
+  }
+  ```
+
+  **Aggregation strategies:**
+  - Numeric: Average, Median, Min, Max
+  - Categorical: Mode (most common value)
+  - Timestamp: First, Last
+
+  ### PNG Download
+
+  ```typescript
+  import { toPng } from 'html-to-image';
+
+  async function downloadVisualization() {
+    const node = document.getElementById('atlas-viewer');
+    const dataUrl = await toPng(node, {
+      width: 1920,
+      height: 1080,
+      pixelRatio: 2
+    });
+
+    const link = document.createElement('a');
+    link.download = `${embeddingLayerName}_${timestamp}.png`;
+    link.href = dataUrl;
+    link.click();
+  }
+  ```
+
+  ## File Structure
+
+  ```
+  src/
+  ├── app/
+  │   ├── edit/[fileId]/
+  │   │   └── page.tsx (ADD: Agent Trace Viewer tab)
+  │   └── api/
+  │       └── embeddings/
+  │           └── generate/
+  │               └── route.ts (NEW: SSE endpoint for progress)
+  │
+  ├── components/
+  │   └── embedding-viewer/
+  │       ├── agent-trace-viewer.tsx (NEW: Main container)
+  │       ├── embedding-layer-dropdown.tsx (NEW)
+  │       ├── embedding-wizard.tsx (NEW: Multi-step wizard)
+  │       │   ├── step-0-name.tsx
+  │       │   ├── step-1-provider-model.tsx
+  │       │   ├── step-2-composition-mode.tsx
+  │       │   ├── step-3a-single-column.tsx
+  │       │   ├── step-3b-multi-column.tsx
+  │       │   ├── step-3c-conversational.tsx
+  │       │   ├── step-4-review.tsx
+  │       │   └── step-5-progress.tsx
+  │       ├── embedding-visualization.tsx (NEW: Atlas integration)
+  │       ├── embedding-detail-panel.tsx (NEW)
+  │       ├── embedding-controls.tsx (NEW: color-by, search, PNG)
+  │       └── embedding-empty-state.tsx (NEW)
+  │
+  ├── lib/
+  │   └── embedding/
+  │       ├── storage.ts (NEW: IndexedDB + OPFS operations)
+  │       ├── text-composer.ts (NEW: compose text from rows)
+  │       ├── conversation-aggregator.ts (NEW: group by conversation)
+  │       ├── batch-embedder.ts (NEW: batch API calls using AI SDK)
+  │       ├── umap-reducer.ts (NEW: wrapper for Atlas UMAP)
+  │       └── layer-switcher.ts (NEW: handle active layer switching)
+  │
+  └── types/
+      └── embedding.ts (NEW: all embedding types)
+  ```
+
+  ## Atlas Components Used
+
+  ```typescript
+  import { createUMAP, EmbeddingView } from 'embedding-atlas';
+
+  // UMAP for dimensionality reduction
+  const umap = createUMAP(embeddings, {
+    n_neighbors: 15,
+    min_dist: 0.1,
+    metric: 'cosine'
+  });
+
+  // EmbeddingView for scatter plot
+  <EmbeddingView
+    data={atlasFormattedData}
+    onPointClick={handlePointClick}
+    colorBy={selectedColumn}
+  />
+  ```
+
+  ## Integration Points
+
+  **Input:**
+  - Existing spreadsheet data from `useFileStorage` hook
+  - Provider configuration from `provider-config.json`
+  - Model registry from `model-registry.yaml`
+
+  **Output:**
+  - New columns in spreadsheet: `_embedding_composition_N`
+  - EmbeddingLayer data in IndexedDB + OPFS
+  - Interactive visualization in Agent Trace Viewer tab
+
+  **Reuse existing code:**
+  - Provider/model selection: Pattern from `/test-generation` page
+  - Batch embedding: Use AI SDK `embed()` function
+  - File storage: Extend `useFileStorage` hook
+
+  ## Acceptance Criteria
+
+  - [ ] Agent Trace Viewer tab visible in `/edit/[fileId]` at all times
+  - [ ] Empty state shows clear CTA: "Create Embedding View"
+  - [ ] Multi-step wizard guides user through configuration
+  - [ ] Step 1 loads providers with embedding capability only
+  - [ ] Step 2 shows three composition modes (single/multi/conversational)
+  - [ ] Step 3C includes slider for "Turn plus N" strategy
+  - [ ] Step 4 shows review without API cost estimation
+  - [ ] Step 5 shows progress with SSE updates from API
+  - [ ] Batch embedding uses AI SDK with 100 texts per batch
+  - [ ] UMAP coordinates computed during generation (pre-computed)
+  - [ ] Composed text column added to table for ALL embedding types
+  - [ ] For conversation-level: Composed text duplicated across all rows in conversation
+  - [ ] Active layer stored in IndexedDB, others in OPFS
+  - [ ] Layer dropdown shows all embedding views with metadata
+  - [ ] Switching layers shows ~200ms loader
+  - [ ] Scatter plot renders with Embedding Atlas
+  - [ ] Click point → detail panel shows conversation/row data
+  - [ ] Color-by dropdown aggregates metadata on-demand for conversation-level
+  - [ ] PNG download button exports current visualization
+  - [ ] No sync between table and visualization (simplified)
+  - [ ] Handles 1000+ points smoothly
+  - [ ] Kebab menu allows edit/delete/duplicate/export
+  - [ ] Error handling: Shows warning for failed points, continues with successful ones
+  - [ ] Supports multiple embedding layers per file (dropdown to switch)
 
   ---
   Feature 2: UMAP Projection & Atlas Viewer
