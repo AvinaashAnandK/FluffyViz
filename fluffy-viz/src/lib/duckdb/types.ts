@@ -57,9 +57,10 @@ export interface EmbeddingPointData {
 
 /**
  * Result of a count query
+ * Note: DuckDB returns BigInt for COUNT(*), so we accept both
  */
 export interface CountResult {
-  count: number;
+  count: number | bigint;
 }
 
 /**

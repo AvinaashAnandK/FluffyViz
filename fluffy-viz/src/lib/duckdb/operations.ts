@@ -149,7 +149,9 @@ export async function queryFileData(
 export async function getFileRowCount(fileId: string): Promise<number> {
   const tableName = `file_data_${fileId}`;
   const result = await executeQuery<CountResult>(`SELECT COUNT(*) as count FROM "${tableName}"`);
-  return result[0]?.count || 0;
+  const count = result[0]?.count || 0;
+  // Convert BigInt to Number (DuckDB returns BigInt for COUNT(*))
+  return typeof count === 'bigint' ? Number(count) : count;
 }
 
 /**
