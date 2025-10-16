@@ -1,6 +1,7 @@
 "use client"
 
 import React, { useState, useCallback } from "react"
+import { useRouter } from "next/navigation"
 import {
   Sidebar,
   SidebarContent,
@@ -33,6 +34,7 @@ import { AIProviderConfigDemo } from "@/components/ai-provider-config-demo"
 import { useHasConfiguredProviders } from "@/hooks/use-provider-config"
 
 export function AppSidebar() {
+  const router = useRouter()
   const { files, fileCount, deleteFile, clearAllFiles, renameFile } = useFileStorage()
   const hasConfiguredProviders = useHasConfiguredProviders()
   const [deleteAllDialogOpen, setDeleteAllDialogOpen] = useState(false)
@@ -85,18 +87,8 @@ export function AppSidebar() {
   }
 
   const handleFileClick = (file: StoredFile) => {
-    // Create a File object from the stored content
-    const blob = new Blob([file.content], { type: file.mimeType })
-    const fileObject = new File([blob], file.name, {
-      type: file.mimeType,
-      lastModified: file.lastModified
-    })
-    emitFileSelected({
-      file: fileObject,
-      source: 'sidebar-stored',
-      storedFileId: file.id,
-      skipInitialSave: true
-    })
+    // Navigate directly to the edit page (DuckDB migration: no file reconstruction needed)
+    router.push(`/edit/${file.id}`)
   }
 
   const handleRename = () => {
