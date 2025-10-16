@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { SpreadsheetTable } from './SpreadsheetTable'
 import { AddColumnModal } from './AddColumnModal'
@@ -10,9 +10,17 @@ import { AgentTraceViewer } from '@/components/embedding-viewer/agent-trace-view
 import { Model, ModelProvider } from '@/types/models'
 import { useFileStorage } from '@/hooks/use-file-storage'
 import { Button } from '@/components/ui/button'
-import { ArrowLeft, Download, Save, Loader2 } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
+import { ArrowLeft, Download, Save, Loader2, X, ArrowUpDown } from 'lucide-react'
 import { generateColumnData } from '@/lib/ai-inference'
 import Papa from 'papaparse'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 
 export interface Column {
   id: string
@@ -361,9 +369,9 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
           <TabsContent value="spreadsheet" className="mt-4">
             {/* Spreadsheet Card with integrated drawer */}
             <Card className="rounded-2xl shadow-sm relative overflow-hidden">
-              <CardHeader>
+              {/* <CardHeader>
                 <CardTitle className="font-sans">Spreadsheet Editor</CardTitle>
-              </CardHeader>
+              </CardHeader> */}
 
               {/* Content area that shifts left when drawer opens */}
               <CardContent
@@ -371,6 +379,82 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
                   isAddColumnModalOpen ? 'mr-[440px]' : 'mr-0'
                 }`}
               >
+                {/* Filter and Sort Controls */}
+                <div className="mb-4 p-4 bg-muted/30 rounded-lg border border-border">
+                  <div className="flex items-center gap-4 flex-wrap">
+                    {/* Sort Control */}
+                    <div className="flex items-center gap-2">
+                      <ArrowUpDown className="w-4 h-4 text-muted-foreground" />
+                      <span className="text-sm font-medium">Sort by:</span>
+                      <Select
+                        value={sortColumn || 'none'}
+                        onValueChange={(value) => {
+                          if (value === 'none') {
+                            setSortColumn(null)
+                            setSortDirection(null)
+                          } else {
+                            setSortColumn(value)
+                            if (!sortDirection) {
+                              setSortDirection('asc')
+                            }
+                          }
+                        }}
+                      >
+                        <SelectTrigger className="w-[200px]">
+                          <SelectValue placeholder="No sorting" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">No sorting</SelectItem>
+                          {columns.map((col) => (
+                            <SelectItem key={col.id} value={col.id}>
+                              {col.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+
+                      {sortColumn && (
+                        <>
+                          <Select
+                            value={sortDirection || 'asc'}
+                            onValueChange={(value) => setSortDirection(value as 'asc' | 'desc')}
+                          >
+                            <SelectTrigger className="w-[120px]">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="asc">Ascending</SelectItem>
+                              <SelectItem value="desc">Descending</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setSortColumn(null)
+                              setSortDirection(null)
+                            }}
+                          >
+                            <X className="w-4 h-4" />
+                          </Button>
+                        </>
+                      )}
+                    </div>
+
+                    {/* Active Filters Display */}
+                    {sortColumn && (
+                      <div className="flex items-center gap-2 ml-auto">
+                        <Badge variant="secondary" className="gap-1">
+                          Sorted by: {columns.find(c => c.id === sortColumn)?.name}
+                          <span className="text-xs">
+                            ({sortDirection === 'asc' ? '↑' : '↓'})
+                          </span>
+                        </Badge>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
                 <SpreadsheetTable
                   data={data}
                   columns={columns}

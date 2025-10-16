@@ -5,7 +5,6 @@ import { Plus, Loader2, ArrowUpDown, ArrowUp, ArrowDown, ChevronLeft, ChevronRig
 import type { Column, SpreadsheetData } from './SpreadsheetEditor'
 import { getTemplateGroups } from '@/config/ai-column-templates'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import {
   DropdownMenu,
   DropdownMenuContent,
