@@ -7,6 +7,28 @@ import { getConnection, executeQuery } from '@/lib/duckdb/client';
 import type { ActiveEmbeddingLayer, EmbeddingLayerMetadata, EmbeddingPoint } from '@/types/embedding';
 
 /**
+ * Helper function to format values for SQL
+ */
+function formatValue(value: unknown): string {
+  if (value === null || value === undefined) {
+    return 'NULL';
+  }
+  if (typeof value === 'string') {
+    return `'${value.replace(/'/g, "''")}'`;
+  }
+  if (typeof value === 'boolean') {
+    return value ? 'TRUE' : 'FALSE';
+  }
+  if (typeof value === 'number') {
+    return value.toString();
+  }
+  if (Array.isArray(value)) {
+    return `[${value.join(',')}]`;
+  }
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+/**
  * DuckDB-based embedding storage
  * Replaces IndexedDB + OPFS with SQL-based storage
  */
@@ -25,30 +47,31 @@ export class EmbeddingStorage {
       await conn.query('BEGIN TRANSACTION');
 
       // 1. Insert or replace layer metadata
+      const compositionConfigJson = formatValue(JSON.stringify(layer.compositionConfig));
       await conn.query(`
         INSERT OR REPLACE INTO embedding_layers (
           id, file_id, name, provider, model, dimension,
           composition_mode, composition_config,
           created_at, last_accessed_at, is_active
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `, [
-        layer.id,
-        layer.fileId,
-        layer.name,
-        layer.provider,
-        layer.model,
-        layer.dimension,
-        layer.compositionMode,
-        JSON.stringify(layer.compositionConfig),
-        layer.createdAt,
-        layer.lastAccessedAt,
-        true // New layer is always active
-      ]);
+        ) VALUES (
+          ${formatValue(layer.id)},
+          ${formatValue(layer.fileId)},
+          ${formatValue(layer.name)},
+          ${formatValue(layer.provider)},
+          ${formatValue(layer.model)},
+          ${layer.dimension},
+          ${formatValue(layer.compositionMode)},
+          ${compositionConfigJson},
+          ${formatValue(layer.createdAt)},
+          ${formatValue(layer.lastAccessedAt)},
+          TRUE
+        )
+      `);
 
       // 2. Delete existing points for this layer (if any)
       await conn.query(`
-        DELETE FROM embedding_points WHERE layer_id = ?
-      `, [layer.id]);
+        DELETE FROM embedding_points WHERE layer_id = ${formatValue(layer.id)}
+      `);
 
       // 3. Insert points in batches
       const batchSize = 1000;
@@ -57,13 +80,13 @@ export class EmbeddingStorage {
 
         // Build VALUES clause for batch insert
         const values = batch.map(p => {
-          const embedding = `[${p.embedding.join(',')}]`;
-          const coordinates2d = `[${p.coordinates2D.join(',')}]`;
-          const sourceRowIndices = `[${p.sourceRowIndices.join(',')}]`;
-          const composedText = p.composedText.replace(/'/g, "''");
-          const label = p.label ? `'${p.label.replace(/'/g, "''")}'` : 'NULL';
+          const embedding = formatValue(p.embedding);
+          const coordinates2d = formatValue(p.coordinates2D);
+          const sourceRowIndices = formatValue(p.sourceRowIndices);
+          const composedText = formatValue(p.composedText);
+          const label = p.label ? formatValue(p.label) : 'NULL';
 
-          return `('${layer.id}', '${p.id}', ${embedding}, ${coordinates2d}, '${composedText}', ${label}, ${sourceRowIndices})`;
+          return `(${formatValue(layer.id)}, ${formatValue(p.id)}, ${embedding}, ${coordinates2d}, ${composedText}, ${label}, ${sourceRowIndices})`;
         }).join(',\n');
 
         await conn.query(`
@@ -82,8 +105,8 @@ export class EmbeddingStorage {
       await conn.query(`
         UPDATE embedding_layers
         SET is_active = FALSE
-        WHERE file_id = ? AND id != ?
-      `, [layer.fileId, layer.id]);
+        WHERE file_id = ${formatValue(layer.fileId)} AND id != ${formatValue(layer.id)}
+      `);
 
       await conn.query('COMMIT');
       console.log(`[Embedding Storage] ✓ Layer ${layer.id} saved successfully`);
@@ -109,9 +132,9 @@ export class EmbeddingStorage {
       const layers = await executeQuery<any>(`
         SELECT *
         FROM embedding_layers
-        WHERE file_id = ? AND is_active = TRUE
+        WHERE file_id = ${formatValue(fileId)} AND is_active = TRUE
         LIMIT 1
-      `, [fileId]);
+      `);
 
       if (layers.length === 0) {
         console.log('[Embedding Storage] No active layer found');
@@ -124,9 +147,9 @@ export class EmbeddingStorage {
       const points = await executeQuery<any>(`
         SELECT *
         FROM embedding_points
-        WHERE layer_id = ?
+        WHERE layer_id = ${formatValue(layerMeta.id)}
         ORDER BY point_id
-      `, [layerMeta.id]);
+      `);
 
       console.log(`[Embedding Storage] ✓ Loaded layer ${layerMeta.id} with ${points.length} points`);
 
@@ -176,10 +199,10 @@ export class EmbeddingStorage {
           COUNT(p.point_id) as point_count
         FROM embedding_layers l
         LEFT JOIN embedding_points p ON l.id = p.layer_id
-        WHERE l.file_id = ?
+        WHERE l.file_id = ${formatValue(fileId)}
         GROUP BY l.id, l.name, l.is_active, l.composition_mode, l.created_at
         ORDER BY l.created_at DESC
-      `, [fileId]);
+      `);
 
       console.log(`[Embedding Storage] ✓ Found ${layers.length} layers`);
 
@@ -208,10 +231,10 @@ export class EmbeddingStorage {
     try {
       await executeQuery(`
         UPDATE embedding_layers
-        SET is_active = CASE WHEN id = ? THEN TRUE ELSE FALSE END,
-            last_accessed_at = CASE WHEN id = ? THEN CURRENT_TIMESTAMP ELSE last_accessed_at END
-        WHERE file_id = ?
-      `, [layerId, layerId, fileId]);
+        SET is_active = CASE WHEN id = ${formatValue(layerId)} THEN TRUE ELSE FALSE END,
+            last_accessed_at = CASE WHEN id = ${formatValue(layerId)} THEN CURRENT_TIMESTAMP ELSE last_accessed_at END
+        WHERE file_id = ${formatValue(fileId)}
+      `);
 
       console.log('[Embedding Storage] ✓ Active layer updated');
 
@@ -235,13 +258,13 @@ export class EmbeddingStorage {
 
       // Delete points first
       await conn.query(`
-        DELETE FROM embedding_points WHERE layer_id = ?
-      `, [layerId]);
+        DELETE FROM embedding_points WHERE layer_id = ${formatValue(layerId)}
+      `);
 
       // Delete layer metadata
       await conn.query(`
-        DELETE FROM embedding_layers WHERE id = ?
-      `, [layerId]);
+        DELETE FROM embedding_layers WHERE id = ${formatValue(layerId)}
+      `);
 
       await conn.query('COMMIT');
       console.log('[Embedding Storage] ✓ Layer deleted');

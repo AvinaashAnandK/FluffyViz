@@ -17,6 +17,7 @@ import { composeText, addComposedTextColumn } from '@/lib/embedding/text-compose
 import { batchEmbed } from '@/lib/embedding/batch-embedder';
 import { computeUMAPProjection } from '@/lib/embedding/umap-reducer';
 import { Download } from 'lucide-react';
+import { loadProviderSettings, getProviderApiKey, type ProviderKey } from '@/config/provider-settings';
 
 interface AgentTraceViewerProps {
   fileId: string;
@@ -62,7 +63,15 @@ export function AgentTraceViewer({ fileId, data, onDataUpdate }: AgentTraceViewe
     try {
       setLoading(true);
 
-      // Step 1: Compose text
+      // Step 1: Load provider config and get API key
+      const config = await loadProviderSettings();
+      const apiKey = getProviderApiKey(config, state.provider as ProviderKey);
+
+      if (!apiKey) {
+        throw new Error(`API key not found for provider: ${state.provider}`);
+      }
+
+      // Step 2: Compose text
       const compositionConfig = {
         mode: state.compositionMode,
         config: state.compositionConfig,
@@ -73,16 +82,17 @@ export function AgentTraceViewer({ fileId, data, onDataUpdate }: AgentTraceViewe
         compositionConfig
       );
 
-      // Step 2: Generate embeddings
+      // Step 3: Generate embeddings
       const { embeddings, dimension } = await batchEmbed(composedTexts, {
         provider: state.provider,
         model: state.model,
+        apiKey,
       });
 
-      // Step 3: Compute UMAP projection
+      // Step 4: Compute UMAP projection
       const { coordinates2D } = await computeUMAPProjection(embeddings);
 
-      // Step 4: Create embedding points
+      // Step 5: Create embedding points
       const points: EmbeddingPoint[] = embeddings.map((embedding, i) => ({
         id: `point_${i}`,
         embedding,
@@ -92,7 +102,7 @@ export function AgentTraceViewer({ fileId, data, onDataUpdate }: AgentTraceViewe
         label: labels?.[i],
       }));
 
-      // Step 5: Add composed text column to spreadsheet
+      // Step 6: Add composed text column to spreadsheet
       const columnName = `_embedding_composition_${Date.now()}`;
       const updatedRows = [...data.rows];
       addComposedTextColumn(updatedRows, composedTexts, sourceRowIndices, columnName);
@@ -103,7 +113,7 @@ export function AgentTraceViewer({ fileId, data, onDataUpdate }: AgentTraceViewe
         rows: updatedRows,
       });
 
-      // Step 6: Save embedding layer
+      // Step 7: Save embedding layer
       const layerId = generateEmbeddingId();
       const layer: ActiveEmbeddingLayer = {
         id: layerId,

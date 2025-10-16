@@ -4,8 +4,8 @@
  */
 
 import { embedMany } from 'ai';
-import { openai } from '@ai-sdk/openai';
-import { cohere } from '@ai-sdk/cohere';
+import { createOpenAI } from '@ai-sdk/openai';
+import { createCohere } from '@ai-sdk/cohere';
 import type { GenerationProgress } from '@/types/embedding';
 
 const BATCH_SIZE = 100; // Process 100 texts per batch
@@ -13,6 +13,7 @@ const BATCH_SIZE = 100; // Process 100 texts per batch
 export interface BatchEmbedderConfig {
   provider: string;
   model: string;
+  apiKey: string;
   onProgress?: (progress: GenerationProgress) => void;
 }
 
@@ -22,15 +23,19 @@ export interface EmbeddingResult {
 }
 
 /**
- * Get embedding model based on provider and model name
+ * Get embedding model based on provider and model name with API key
  */
-function getEmbeddingModel(provider: string, model: string) {
+function getEmbeddingModel(provider: string, model: string, apiKey: string) {
   switch (provider.toLowerCase()) {
-    case 'openai':
-      return openai.embedding(model);
+    case 'openai': {
+      const openai = createOpenAI({ apiKey });
+      return openai.textEmbeddingModel(model);
+    }
 
-    case 'cohere':
-      return cohere.embedding(model);
+    case 'cohere': {
+      const cohere = createCohere({ apiKey });
+      return cohere.textEmbeddingModel(model);
+    }
 
     // Add more providers as needed
     // case 'voyageai':
@@ -52,7 +57,7 @@ export async function batchEmbed(
   const totalBatches = Math.ceil(texts.length / BATCH_SIZE);
 
   try {
-    const embeddingModel = getEmbeddingModel(config.provider, config.model);
+    const embeddingModel = getEmbeddingModel(config.provider, config.model, config.apiKey);
 
     for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
       const startIdx = batchIndex * BATCH_SIZE;
