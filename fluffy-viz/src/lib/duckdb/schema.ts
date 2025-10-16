@@ -99,7 +99,6 @@ async function createIndexes(): Promise<void> {
     await executeQuery(`
       CREATE INDEX IF NOT EXISTS idx_embedding_layers_active
       ON embedding_layers(file_id, is_active)
-      WHERE is_active = TRUE
     `);
 
     // Index on embedding_points table

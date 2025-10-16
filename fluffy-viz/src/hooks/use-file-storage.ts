@@ -1,234 +1,36 @@
-import { useState, useEffect, useCallback } from 'react';
+/**
+ * File storage hook using DuckDB WASM
+ * Migrated from IndexedDB to DuckDB for better query capabilities
+ */
 
+import { useState, useEffect, useCallback } from 'react';
+import { initializeSchema, isSchemaInitialized } from '@/lib/duckdb/schema';
+import {
+  saveFileToDuckDB,
+  getAllFiles,
+  renameFile as renameFileInDB,
+  deleteFile as deleteFileInDB,
+  clearAllFiles as clearAllFilesInDB,
+  MAX_FILE_SIZE,
+  WARN_FILE_SIZE,
+} from '@/lib/duckdb/file-storage';
+import type { FileMetadata } from '@/lib/duckdb/types';
+
+/**
+ * StoredFile interface - DuckDB version (no raw content stored)
+ */
 export interface StoredFile {
   id: string;
   name: string;
-  content: string;
   format: string;
   lastModified: number;
   size: number;
   mimeType: string;
-  version?: number; // For optimistic concurrency control
+  version?: number;
 }
 
-const DB_NAME = 'FluffyVizDB';
-const DB_VERSION = 2;
-const STORE_NAME = 'files';
-
-// File size limits (50MB max for safety)
-const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
-const WARN_FILE_SIZE = 10 * 1024 * 1024; // 10MB warning threshold
-
-// Operation queue for preventing race conditions
-class OperationQueue {
-  private queue: Array<() => Promise<void>> = [];
-  private processing = false;
-
-  async enqueue<T>(operation: () => Promise<T>): Promise<T> {
-    return new Promise((resolve, reject) => {
-      this.queue.push(async () => {
-        try {
-          const result = await operation();
-          resolve(result);
-        } catch (error) {
-          reject(error);
-        }
-      });
-      this.process();
-    });
-  }
-
-  private async process(): Promise<void> {
-    if (this.processing || this.queue.length === 0) return;
-
-    this.processing = true;
-    while (this.queue.length > 0) {
-      const operation = this.queue.shift();
-      if (operation) {
-        await operation();
-      }
-    }
-    this.processing = false;
-  }
-}
-
-const operationQueue = new OperationQueue();
-
-class FileStorageDB {
-  private db: IDBDatabase | null = null;
-
-  async init(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const request = indexedDB.open(DB_NAME, DB_VERSION);
-
-      request.onerror = () => reject(request.error);
-      request.onsuccess = () => {
-        this.db = request.result;
-        resolve();
-      };
-
-      request.onupgradeneeded = (event) => {
-        const db = (event.target as IDBOpenDBRequest).result;
-        const oldVersion = event.oldVersion;
-
-        if (!db.objectStoreNames.contains(STORE_NAME)) {
-          const store = db.createObjectStore(STORE_NAME, { keyPath: 'id' });
-          store.createIndex('name', 'name', { unique: false });
-          store.createIndex('lastModified', 'lastModified', { unique: false });
-        }
-
-        // Migration for version 2: add version field for existing files
-        if (oldVersion < 2) {
-          const transaction = (event.target as IDBOpenDBRequest).transaction;
-          if (transaction) {
-            const store = transaction.objectStore(STORE_NAME);
-            const request = store.openCursor();
-
-            request.onsuccess = (e) => {
-              const cursor = (e.target as IDBRequest).result;
-              if (cursor) {
-                const file = cursor.value;
-                if (file.version === undefined) {
-                  file.version = 1;
-                  cursor.update(file);
-                }
-                cursor.continue();
-              }
-            };
-          }
-        }
-      };
-    });
-  }
-
-  async getAllFiles(): Promise<StoredFile[]> {
-    return operationQueue.enqueue(async () => {
-      if (!this.db) await this.init();
-
-      return new Promise<StoredFile[]>((resolve, reject) => {
-        const transaction = this.db!.transaction([STORE_NAME], 'readonly');
-        const store = transaction.objectStore(STORE_NAME);
-        const request = store.getAll();
-
-        request.onsuccess = () => {
-          const files = request.result.sort((a, b) => b.lastModified - a.lastModified);
-          resolve(files);
-        };
-        request.onerror = () => reject(request.error);
-      });
-    });
-  }
-
-  async getFile(id: string): Promise<StoredFile | undefined> {
-    return operationQueue.enqueue(async () => {
-      if (!this.db) await this.init();
-
-      return new Promise<StoredFile | undefined>((resolve, reject) => {
-        const transaction = this.db!.transaction([STORE_NAME], 'readonly');
-        const store = transaction.objectStore(STORE_NAME);
-        const request = store.get(id);
-
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-      });
-    });
-  }
-
-  async addFile(file: StoredFile): Promise<void> {
-    return operationQueue.enqueue(async () => {
-      if (!this.db) await this.init();
-
-      // Validate file size
-      if (file.size > MAX_FILE_SIZE) {
-        throw new Error(`File size (${(file.size / 1024 / 1024).toFixed(2)}MB) exceeds maximum allowed size (${MAX_FILE_SIZE / 1024 / 1024}MB)`);
-      }
-
-      // Initialize version for optimistic concurrency control
-      const fileWithVersion = { ...file, version: 1 };
-
-      return new Promise<void>((resolve, reject) => {
-        const transaction = this.db!.transaction([STORE_NAME], 'readwrite');
-        const store = transaction.objectStore(STORE_NAME);
-        const request = store.add(fileWithVersion);
-
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject(request.error);
-      });
-    });
-  }
-
-  async updateFile(file: StoredFile): Promise<void> {
-    return operationQueue.enqueue(async () => {
-      if (!this.db) await this.init();
-
-      // Validate file size
-      if (file.size > MAX_FILE_SIZE) {
-        throw new Error(`File size (${(file.size / 1024 / 1024).toFixed(2)}MB) exceeds maximum allowed size (${MAX_FILE_SIZE / 1024 / 1024}MB)`);
-      }
-
-      return new Promise<void>((resolve, reject) => {
-        const transaction = this.db!.transaction([STORE_NAME], 'readwrite');
-        const store = transaction.objectStore(STORE_NAME);
-
-        // Get current version for optimistic concurrency control
-        const getRequest = store.get(file.id);
-
-        getRequest.onsuccess = () => {
-          const existingFile = getRequest.result;
-
-          if (existingFile && file.version && existingFile.version !== file.version) {
-            reject(new Error('File was modified by another process. Please refresh and try again.'));
-            return;
-          }
-
-          // Increment version
-          const updatedFile = {
-            ...file,
-            version: (existingFile?.version || 0) + 1
-          };
-
-          const putRequest = store.put(updatedFile);
-          putRequest.onsuccess = () => resolve();
-          putRequest.onerror = () => reject(putRequest.error);
-        };
-
-        getRequest.onerror = () => reject(getRequest.error);
-      });
-    });
-  }
-
-  async deleteFile(id: string): Promise<void> {
-    return operationQueue.enqueue(async () => {
-      if (!this.db) await this.init();
-
-      return new Promise<void>((resolve, reject) => {
-        const transaction = this.db!.transaction([STORE_NAME], 'readwrite');
-        const store = transaction.objectStore(STORE_NAME);
-        const request = store.delete(id);
-
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject(request.error);
-      });
-    });
-  }
-
-  async clearAll(): Promise<void> {
-    return operationQueue.enqueue(async () => {
-      if (!this.db) await this.init();
-
-      return new Promise<void>((resolve, reject) => {
-        const transaction = this.db!.transaction([STORE_NAME], 'readwrite');
-        const store = transaction.objectStore(STORE_NAME);
-        const request = store.clear();
-
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject(request.error);
-      });
-    });
-  }
-}
-
-const db = new FileStorageDB();
+// Re-export file size limits for compatibility
+export { MAX_FILE_SIZE, WARN_FILE_SIZE };
 
 // Global event system for synchronizing all hook instances
 const filesChangedEvent = 'filesStorageChanged';
@@ -237,16 +39,88 @@ const notifyFilesChanged = () => {
   window.dispatchEvent(new CustomEvent(filesChangedEvent));
 };
 
+// Track schema initialization
+let schemaInitialized = false;
+let schemaInitializing: Promise<void> | null = null;
+
+/**
+ * Ensure DuckDB schema is initialized before operations
+ */
+async function ensureSchemaInitialized(): Promise<void> {
+  if (schemaInitialized) return;
+
+  if (schemaInitializing) {
+    await schemaInitializing;
+    return;
+  }
+
+  schemaInitializing = (async () => {
+    try {
+      const initialized = await isSchemaInitialized();
+      if (!initialized) {
+        console.log('[useFileStorage] Initializing DuckDB schema...');
+        await initializeSchema();
+      }
+      schemaInitialized = true;
+      console.log('[useFileStorage] DuckDB schema ready');
+    } catch (error) {
+      console.error('[useFileStorage] Failed to initialize schema:', error);
+      throw error;
+    } finally {
+      schemaInitializing = null;
+    }
+  })();
+
+  await schemaInitializing;
+}
+
+/**
+ * Convert FileMetadata to StoredFile for compatibility
+ */
+function fileMetadataToStoredFile(metadata: FileMetadata): StoredFile {
+  return {
+    id: metadata.id,
+    name: metadata.name,
+    format: metadata.format,
+    lastModified: new Date(metadata.last_modified).getTime(),
+    size: metadata.size,
+    mimeType: getMimeType(metadata.format),
+    version: metadata.version,
+  };
+}
+
+/**
+ * Get MIME type from format
+ */
+function getMimeType(format: string): string {
+  const mimeTypes: Record<string, string> = {
+    'csv': 'text/csv',
+    'json': 'application/json',
+    'jsonl': 'application/jsonl',
+    'message-centric': 'application/jsonl',
+    'langfuse': 'application/json',
+    'langsmith': 'application/json',
+    'arize': 'application/json',
+    'turn-level': 'text/csv',
+  };
+  return mimeTypes[format] || 'text/plain';
+}
+
+/**
+ * File storage hook - DuckDB version
+ */
 export function useFileStorage() {
   const [files, setFiles] = useState<StoredFile[]>([]);
   const [loading, setLoading] = useState(true);
 
   const loadFiles = useCallback(async () => {
     try {
-      const storedFiles = await db.getAllFiles();
+      await ensureSchemaInitialized();
+      const fileMetadata = await getAllFiles();
+      const storedFiles = fileMetadata.map(fileMetadataToStoredFile);
       setFiles(storedFiles);
     } catch (error) {
-      console.error('Error loading files:', error);
+      console.error('[useFileStorage] Error loading files:', error);
     } finally {
       setLoading(false);
     }
@@ -274,99 +148,56 @@ export function useFileStorage() {
     mimeType: string,
     existingId?: string
   ) => {
-    const size = new Blob([fileContent]).size;
-
-    // Check file size before processing
-    if (size > MAX_FILE_SIZE) {
-      throw new Error(
-        `File "${fileName}" is too large (${(size / 1024 / 1024).toFixed(2)}MB). ` +
-        `Maximum allowed size is ${MAX_FILE_SIZE / 1024 / 1024}MB.`
-      );
-    }
-
-    // Warn about large files
-    if (size > WARN_FILE_SIZE) {
-      console.warn(
-        `Warning: File "${fileName}" is large (${(size / 1024 / 1024).toFixed(2)}MB). ` +
-        `This may impact browser performance.`
-      );
-    }
-
-    const id = existingId ?? `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-
     try {
-      let version: number | undefined;
-
-      // Get current version if updating existing file
-      if (existingId) {
-        const existingFile = await db.getFile(existingId);
-        version = existingFile?.version;
-      }
-
-      const storedFile: StoredFile = {
-        id,
-        name: fileName,
-        content: fileContent,
-        format,
-        lastModified: Date.now(),
-        size,
-        mimeType,
-        version
-      };
-
-      if (existingId) {
-        await db.updateFile(storedFile);
-      } else {
-        await db.addFile(storedFile);
-      }
+      await ensureSchemaInitialized();
+      const id = await saveFileToDuckDB(fileContent, fileName, format, mimeType, existingId);
       await loadFiles();
-      notifyFilesChanged(); // Notify all instances
-      return storedFile.id;
+      notifyFilesChanged();
+      return id;
     } catch (error) {
-      console.error('Error saving file:', error);
+      console.error('[useFileStorage] Error saving file:', error);
       throw error;
     }
   }, [loadFiles]);
 
   const renameFile = useCallback(async (id: string, newName: string) => {
-    const file = files.find(f => f.id === id);
-    if (!file) return;
-
-    const updatedFile = { ...file, name: newName, lastModified: Date.now() };
-
     try {
-      await db.updateFile(updatedFile);
+      await ensureSchemaInitialized();
+      await renameFileInDB(id, newName);
       await loadFiles();
-      notifyFilesChanged(); // Notify all instances
+      notifyFilesChanged();
     } catch (error) {
-      console.error('Error renaming file:', error);
+      console.error('[useFileStorage] Error renaming file:', error);
       throw error;
     }
-  }, [files, loadFiles]);
+  }, [loadFiles]);
 
   const deleteFile = useCallback(async (id: string) => {
     try {
-      await db.deleteFile(id);
+      await ensureSchemaInitialized();
+      await deleteFileInDB(id);
       await loadFiles();
-      notifyFilesChanged(); // Notify all instances
+      notifyFilesChanged();
     } catch (error) {
-      console.error('Error deleting file:', error);
+      console.error('[useFileStorage] Error deleting file:', error);
       throw error;
     }
   }, [loadFiles]);
 
   const clearAllFiles = useCallback(async () => {
     try {
-      await db.clearAll();
+      await ensureSchemaInitialized();
+      await clearAllFilesInDB();
       await loadFiles();
-      notifyFilesChanged(); // Notify all instances
+      notifyFilesChanged();
     } catch (error) {
-      console.error('Error clearing files:', error);
+      console.error('[useFileStorage] Error clearing files:', error);
       throw error;
     }
   }, [loadFiles]);
 
-  const getFile = useCallback((id: string) => {
+  const getFile = useCallback((id: string): StoredFile | undefined => {
+    // Synchronous lookup from loaded files (same as original behavior)
     return files.find(f => f.id === id);
   }, [files]);
 
@@ -379,6 +210,6 @@ export function useFileStorage() {
     deleteFile,
     clearAllFiles,
     getFile,
-    refreshFiles: loadFiles
+    refreshFiles: loadFiles,
   };
 }

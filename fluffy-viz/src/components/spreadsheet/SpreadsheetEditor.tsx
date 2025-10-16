@@ -12,7 +12,6 @@ import { useFileStorage } from '@/hooks/use-file-storage'
 import { Button } from '@/components/ui/button'
 import { ArrowLeft, Download, Save, Loader2 } from 'lucide-react'
 import { generateColumnData } from '@/lib/ai-inference'
-import { parseFileContent } from '@/lib/format-parser'
 import Papa from 'papaparse'
 
 export interface Column {
@@ -63,18 +62,21 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
         if (storedFile) {
           setFileName(storedFile.name)
 
-          // Parse the file content using format-aware parser
-          const parsedData = await parseFileContent(storedFile.content, storedFile.format as any)
+          // Query data directly from DuckDB
+          const { getFileData } = await import('@/lib/duckdb')
+          const parsedData = await getFileData(fileId)
           setData(parsedData)
 
           // Generate columns from the first data row
           if (parsedData.length > 0) {
-            const generatedColumns = Object.keys(parsedData[0]).map((key) => ({
-              id: key,
-              name: key,
-              type: typeof parsedData[0][key] === 'number' ? 'number' : 'string',
-              visible: true
-            }))
+            const generatedColumns = Object.keys(parsedData[0])
+              .filter(key => key !== 'row_index') // Exclude internal row_index column
+              .map((key) => ({
+                id: key,
+                name: key,
+                type: typeof parsedData[0][key] === 'number' ? 'number' : 'string',
+                visible: true
+              }))
             setColumns(generatedColumns)
           }
         }

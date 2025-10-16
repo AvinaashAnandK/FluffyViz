@@ -21,6 +21,20 @@ export {
   tableExists,
 } from './operations';
 
+// File storage
+export {
+  saveFileToDuckDB,
+  getAllFiles,
+  getFileMetadata,
+  getFileData,
+  renameFile,
+  deleteFile,
+  clearAllFiles,
+  fileExists,
+  MAX_FILE_SIZE,
+  WARN_FILE_SIZE,
+} from './file-storage';
+
 // Query builders
 export { QueryBuilder, InsertBuilder, UpdateBuilder, escapeIdentifier, escapeString } from './query-builder';
 
