@@ -104,8 +104,7 @@ export function AgentTraceViewer({ fileId, data, onDataUpdate }: AgentTraceViewe
 
       // Step 6: Add composed text column to spreadsheet
       const columnName = `_embedding_composition_${Date.now()}`;
-      const updatedRows = [...data.rows];
-      addComposedTextColumn(updatedRows, composedTexts, sourceRowIndices, columnName);
+      const updatedRows = addComposedTextColumn(data.rows, composedTexts, sourceRowIndices, columnName);
 
       // Update data
       onDataUpdate({

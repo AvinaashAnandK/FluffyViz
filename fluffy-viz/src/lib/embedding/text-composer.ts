@@ -185,14 +185,19 @@ export function addComposedTextColumn(
   composedTexts: string[],
   sourceRowIndices: number[][],
   columnName: string
-): void {
+): Record<string, unknown>[] {
+  // Clone rows to avoid mutating DuckDB Proxy objects
+  const clonedRows = rows.map(row => ({ ...row }));
+
   // For each composed text, add it to the corresponding source rows
   composedTexts.forEach((text, i) => {
     const rowIndices = sourceRowIndices[i];
     rowIndices.forEach(rowIdx => {
-      if (rowIdx < rows.length) {
-        rows[rowIdx][columnName] = text;
+      if (rowIdx < clonedRows.length) {
+        clonedRows[rowIdx][columnName] = text;
       }
     });
   });
+
+  return clonedRows;
 }
