@@ -12,7 +12,7 @@ import { Card } from '@/components/ui/card';
 import { EmbeddingWizard } from './embedding-wizard';
 import { EmbeddingVisualization } from './embedding-visualization';
 import type { WizardState, ActiveEmbeddingLayer, EmbeddingLayerMetadata, EmbeddingPoint } from '@/types/embedding';
-import { embeddingDB, generateEmbeddingId, switchEmbeddingLayer } from '@/lib/embedding/storage';
+import { embeddingStorage, generateEmbeddingId } from '@/lib/embedding/storage';
 import { composeText, addComposedTextColumn } from '@/lib/embedding/text-composer';
 import { batchEmbed } from '@/lib/embedding/batch-embedder';
 import { computeUMAPProjection } from '@/lib/embedding/umap-reducer';
@@ -43,11 +43,11 @@ export function AgentTraceViewer({ fileId, data, onDataUpdate }: AgentTraceViewe
   const loadEmbeddingLayers = async () => {
     try {
       setLoading(true);
-      const metadata = await embeddingDB.getEmbeddingMetadata(fileId);
+      const metadata = await embeddingStorage.getLayerMetadata(fileId);
       setLayers(metadata);
 
       // Load active layer
-      const active = await embeddingDB.getActiveEmbeddingLayer(fileId);
+      const active = await embeddingStorage.getActiveLayer(fileId);
       if (active) {
         setActiveLayer(active);
       }
@@ -119,22 +119,8 @@ export function AgentTraceViewer({ fileId, data, onDataUpdate }: AgentTraceViewe
         lastAccessedAt: new Date().toISOString(),
       };
 
-      // Save as active layer
-      await embeddingDB.setActiveEmbeddingLayer(layer);
-
-      // Save metadata
-      const metadata: EmbeddingLayerMetadata = {
-        id: layerId,
-        name: state.name,
-        isActive: true,
-        pointCount: points.length,
-        compositionMode: state.compositionMode,
-        createdAt: layer.createdAt,
-      };
-      await embeddingDB.saveEmbeddingMetadata(metadata);
-
-      // Mark all other layers as inactive
-      await embeddingDB.updateActiveLayer(fileId, layerId);
+      // Save layer (automatically sets as active and marks others as inactive)
+      await embeddingStorage.saveLayer(layer);
 
       // Reload layers
       await loadEmbeddingLayers();
@@ -152,7 +138,7 @@ export function AgentTraceViewer({ fileId, data, onDataUpdate }: AgentTraceViewe
 
     try {
       setLoading(true);
-      await switchEmbeddingLayer(fileId, layerId);
+      await embeddingStorage.setActiveLayer(fileId, layerId);
       await loadEmbeddingLayers();
     } catch (error) {
       console.error('Error switching layer:', error);

@@ -1,298 +1,263 @@
 /**
  * Storage layer for embedding system
- * Uses hybrid approach: IndexedDB for active layer + OPFS for inactive layers
+ * Uses DuckDB for persistent storage of embedding layers and points
  */
 
-import type { ActiveEmbeddingLayer, EmbeddingLayerMetadata } from '@/types/embedding';
+import { getConnection, executeQuery } from '@/lib/duckdb/client';
+import type { ActiveEmbeddingLayer, EmbeddingLayerMetadata, EmbeddingPoint } from '@/types/embedding';
 
-const DB_NAME = 'FluffyVizDB';
-const DB_VERSION = 3; // Increment from existing version 2
-const EMBEDDING_STORE = 'embeddingLayers';
-const EMBEDDING_METADATA_STORE = 'embeddingMetadata';
+/**
+ * DuckDB-based embedding storage
+ * Replaces IndexedDB + OPFS with SQL-based storage
+ */
+export class EmbeddingStorage {
+  /**
+   * Save embedding layer with all points
+   * Uses transaction to ensure atomicity
+   */
+  async saveLayer(layer: ActiveEmbeddingLayer): Promise<void> {
+    console.log(`[Embedding Storage] Saving layer ${layer.id} with ${layer.points.length} points`);
 
-// Operation queue for preventing race conditions
-class OperationQueue {
-  private queue: Array<() => Promise<void>> = [];
-  private processing = false;
+    const conn = await getConnection();
 
-  async enqueue<T>(operation: () => Promise<T>): Promise<T> {
-    return new Promise((resolve, reject) => {
-      this.queue.push(async () => {
-        try {
-          const result = await operation();
-          resolve(result);
-        } catch (error) {
-          reject(error);
-        }
-      });
-      this.process();
-    });
-  }
-
-  private async process(): Promise<void> {
-    if (this.processing || this.queue.length === 0) return;
-
-    this.processing = true;
-    while (this.queue.length > 0) {
-      const operation = this.queue.shift();
-      if (operation) {
-        await operation();
-      }
-    }
-    this.processing = false;
-  }
-}
-
-const operationQueue = new OperationQueue();
-
-class EmbeddingStorageDB {
-  private db: IDBDatabase | null = null;
-
-  async init(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const request = indexedDB.open(DB_NAME, DB_VERSION);
-
-      request.onerror = () => reject(request.error);
-      request.onsuccess = () => {
-        this.db = request.result;
-        resolve();
-      };
-
-      request.onupgradeneeded = (event) => {
-        const db = (event.target as IDBOpenDBRequest).result;
-
-        // Create embedding layers store if it doesn't exist
-        if (!db.objectStoreNames.contains(EMBEDDING_STORE)) {
-          const store = db.createObjectStore(EMBEDDING_STORE, { keyPath: 'id' });
-          store.createIndex('fileId', 'fileId', { unique: false });
-          store.createIndex('lastAccessedAt', 'lastAccessedAt', { unique: false });
-        }
-
-        // Create embedding metadata store
-        if (!db.objectStoreNames.contains(EMBEDDING_METADATA_STORE)) {
-          const metaStore = db.createObjectStore(EMBEDDING_METADATA_STORE, { keyPath: 'id' });
-          metaStore.createIndex('fileId', 'fileId', { unique: false });
-        }
-      };
-    });
-  }
-
-  // Get active embedding layer for a file
-  async getActiveEmbeddingLayer(fileId: string): Promise<ActiveEmbeddingLayer | null> {
-    return operationQueue.enqueue(async () => {
-      if (!this.db) await this.init();
-
-      return new Promise<ActiveEmbeddingLayer | null>((resolve, reject) => {
-        const transaction = this.db!.transaction([EMBEDDING_STORE], 'readonly');
-        const store = transaction.objectStore(EMBEDDING_STORE);
-        const index = store.index('fileId');
-        const request = index.getAll(fileId);
-
-        request.onsuccess = () => {
-          const layers = request.result as ActiveEmbeddingLayer[];
-          // Should only be one layer per file in this store (the active one)
-          resolve(layers[0] || null);
-        };
-        request.onerror = () => reject(request.error);
-      });
-    });
-  }
-
-  // Save active embedding layer
-  async setActiveEmbeddingLayer(layer: ActiveEmbeddingLayer): Promise<void> {
-    return operationQueue.enqueue(async () => {
-      if (!this.db) await this.init();
-
-      return new Promise<void>((resolve, reject) => {
-        const transaction = this.db!.transaction([EMBEDDING_STORE], 'readwrite');
-        const store = transaction.objectStore(EMBEDDING_STORE);
-
-        // Update lastAccessedAt
-        const updatedLayer = {
-          ...layer,
-          lastAccessedAt: new Date().toISOString()
-        };
-
-        const request = store.put(updatedLayer);
-
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject(request.error);
-      });
-    });
-  }
-
-  // Delete active embedding layer (when switching)
-  async deleteActiveEmbeddingLayer(layerId: string): Promise<void> {
-    return operationQueue.enqueue(async () => {
-      if (!this.db) await this.init();
-
-      return new Promise<void>((resolve, reject) => {
-        const transaction = this.db!.transaction([EMBEDDING_STORE], 'readwrite');
-        const store = transaction.objectStore(EMBEDDING_STORE);
-        const request = store.delete(layerId);
-
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject(request.error);
-      });
-    });
-  }
-
-  // Get all embedding layer metadata for a file
-  async getEmbeddingMetadata(fileId: string): Promise<EmbeddingLayerMetadata[]> {
-    return operationQueue.enqueue(async () => {
-      if (!this.db) await this.init();
-
-      return new Promise<EmbeddingLayerMetadata[]>((resolve, reject) => {
-        const transaction = this.db!.transaction([EMBEDDING_METADATA_STORE], 'readonly');
-        const store = transaction.objectStore(EMBEDDING_METADATA_STORE);
-        const index = store.index('fileId');
-        const request = index.getAll(fileId);
-
-        request.onsuccess = () => {
-          const metadata = request.result as EmbeddingLayerMetadata[];
-          // Sort by creation date (newest first)
-          resolve(metadata.sort((a, b) =>
-            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-          ));
-        };
-        request.onerror = () => reject(request.error);
-      });
-    });
-  }
-
-  // Save embedding layer metadata
-  async saveEmbeddingMetadata(metadata: EmbeddingLayerMetadata): Promise<void> {
-    return operationQueue.enqueue(async () => {
-      if (!this.db) await this.init();
-
-      return new Promise<void>((resolve, reject) => {
-        const transaction = this.db!.transaction([EMBEDDING_METADATA_STORE], 'readwrite');
-        const store = transaction.objectStore(EMBEDDING_METADATA_STORE);
-        const request = store.put(metadata);
-
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject(request.error);
-      });
-    });
-  }
-
-  // Delete embedding layer metadata
-  async deleteEmbeddingMetadata(layerId: string): Promise<void> {
-    return operationQueue.enqueue(async () => {
-      if (!this.db) await this.init();
-
-      return new Promise<void>((resolve, reject) => {
-        const transaction = this.db!.transaction([EMBEDDING_METADATA_STORE], 'readwrite');
-        const store = transaction.objectStore(EMBEDDING_METADATA_STORE);
-        const request = store.delete(layerId);
-
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject(request.error);
-      });
-    });
-  }
-
-  // Update which layer is active
-  async updateActiveLayer(fileId: string, activeLayerId: string): Promise<void> {
-    return operationQueue.enqueue(async () => {
-      if (!this.db) await this.init();
-
-      const metadata = await this.getEmbeddingMetadata(fileId);
-
-      // Update all metadata to mark correct layer as active
-      const transaction = this.db!.transaction([EMBEDDING_METADATA_STORE], 'readwrite');
-      const store = transaction.objectStore(EMBEDDING_METADATA_STORE);
-
-      for (const meta of metadata) {
-        const updated = { ...meta, isActive: meta.id === activeLayerId };
-        store.put(updated);
-      }
-
-      return new Promise<void>((resolve, reject) => {
-        transaction.oncomplete = () => resolve();
-        transaction.onerror = () => reject(transaction.error);
-      });
-    });
-  }
-}
-
-export const embeddingDB = new EmbeddingStorageDB();
-
-// OPFS (Origin Private File System) helpers for storing inactive layers
-export class OPFSManager {
-  private root: FileSystemDirectoryHandle | null = null;
-
-  async init(): Promise<void> {
-    if (this.root) return;
-    this.root = await navigator.storage.getDirectory();
-  }
-
-  async saveLayerToOPFS(layer: ActiveEmbeddingLayer): Promise<void> {
-    await this.init();
-
-    const fileName = `embedding_${layer.id}.json`;
-    const fileHandle = await this.root!.getFileHandle(fileName, { create: true });
-    const writable = await fileHandle.createWritable();
-
-    await writable.write(JSON.stringify(layer));
-    await writable.close();
-  }
-
-  async loadLayerFromOPFS(layerId: string): Promise<ActiveEmbeddingLayer> {
-    await this.init();
-
-    const fileName = `embedding_${layerId}.json`;
-    const fileHandle = await this.root!.getFileHandle(fileName);
-    const file = await fileHandle.getFile();
-    const text = await file.text();
-
-    return JSON.parse(text) as ActiveEmbeddingLayer;
-  }
-
-  async deleteLayerFromOPFS(layerId: string): Promise<void> {
-    await this.init();
-
-    const fileName = `embedding_${layerId}.json`;
-    await this.root!.removeEntry(fileName);
-  }
-
-  async layerExistsInOPFS(layerId: string): Promise<boolean> {
     try {
-      await this.init();
-      const fileName = `embedding_${layerId}.json`;
-      await this.root!.getFileHandle(fileName);
-      return true;
-    } catch {
-      return false;
+      // Start transaction
+      await conn.query('BEGIN TRANSACTION');
+
+      // 1. Insert or replace layer metadata
+      await conn.query(`
+        INSERT OR REPLACE INTO embedding_layers (
+          id, file_id, name, provider, model, dimension,
+          composition_mode, composition_config,
+          created_at, last_accessed_at, is_active
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [
+        layer.id,
+        layer.fileId,
+        layer.name,
+        layer.provider,
+        layer.model,
+        layer.dimension,
+        layer.compositionMode,
+        JSON.stringify(layer.compositionConfig),
+        layer.createdAt,
+        layer.lastAccessedAt,
+        true // New layer is always active
+      ]);
+
+      // 2. Delete existing points for this layer (if any)
+      await conn.query(`
+        DELETE FROM embedding_points WHERE layer_id = ?
+      `, [layer.id]);
+
+      // 3. Insert points in batches
+      const batchSize = 1000;
+      for (let i = 0; i < layer.points.length; i += batchSize) {
+        const batch = layer.points.slice(i, i + batchSize);
+
+        // Build VALUES clause for batch insert
+        const values = batch.map(p => {
+          const embedding = `[${p.embedding.join(',')}]`;
+          const coordinates2d = `[${p.coordinates2D.join(',')}]`;
+          const sourceRowIndices = `[${p.sourceRowIndices.join(',')}]`;
+          const composedText = p.composedText.replace(/'/g, "''");
+          const label = p.label ? `'${p.label.replace(/'/g, "''")}'` : 'NULL';
+
+          return `('${layer.id}', '${p.id}', ${embedding}, ${coordinates2d}, '${composedText}', ${label}, ${sourceRowIndices})`;
+        }).join(',\n');
+
+        await conn.query(`
+          INSERT INTO embedding_points (
+            layer_id, point_id, embedding, coordinates_2d,
+            composed_text, label, source_row_indices
+          ) VALUES ${values}
+        `);
+
+        if (i % 5000 === 0 && i > 0) {
+          console.log(`[Embedding Storage] Inserted ${i}/${layer.points.length} points`);
+        }
+      }
+
+      // 4. Mark all other layers for this file as inactive
+      await conn.query(`
+        UPDATE embedding_layers
+        SET is_active = FALSE
+        WHERE file_id = ? AND id != ?
+      `, [layer.fileId, layer.id]);
+
+      await conn.query('COMMIT');
+      console.log(`[Embedding Storage] ✓ Layer ${layer.id} saved successfully`);
+
+    } catch (error) {
+      await conn.query('ROLLBACK');
+      console.error('[Embedding Storage] Error saving layer:', error);
+      throw error;
+    } finally {
+      await conn.close();
+    }
+  }
+
+  /**
+   * Get active embedding layer for a file
+   * Returns null if no active layer exists
+   */
+  async getActiveLayer(fileId: string): Promise<ActiveEmbeddingLayer | null> {
+    console.log(`[Embedding Storage] Getting active layer for file ${fileId}`);
+
+    try {
+      // Get layer metadata
+      const layers = await executeQuery<any>(`
+        SELECT *
+        FROM embedding_layers
+        WHERE file_id = ? AND is_active = TRUE
+        LIMIT 1
+      `, [fileId]);
+
+      if (layers.length === 0) {
+        console.log('[Embedding Storage] No active layer found');
+        return null;
+      }
+
+      const layerMeta = layers[0];
+
+      // Get points for this layer
+      const points = await executeQuery<any>(`
+        SELECT *
+        FROM embedding_points
+        WHERE layer_id = ?
+        ORDER BY point_id
+      `, [layerMeta.id]);
+
+      console.log(`[Embedding Storage] ✓ Loaded layer ${layerMeta.id} with ${points.length} points`);
+
+      // Transform database rows to ActiveEmbeddingLayer
+      return {
+        id: layerMeta.id,
+        fileId: layerMeta.file_id,
+        name: layerMeta.name,
+        provider: layerMeta.provider,
+        model: layerMeta.model,
+        dimension: layerMeta.dimension,
+        compositionMode: layerMeta.composition_mode,
+        compositionConfig: JSON.parse(layerMeta.composition_config),
+        points: points.map(p => ({
+          id: p.point_id,
+          embedding: p.embedding,
+          coordinates2D: p.coordinates_2d,
+          composedText: p.composed_text,
+          label: p.label,
+          sourceRowIndices: p.source_row_indices
+        } as EmbeddingPoint)),
+        createdAt: layerMeta.created_at,
+        lastAccessedAt: layerMeta.last_accessed_at
+      };
+
+    } catch (error) {
+      console.error('[Embedding Storage] Error getting active layer:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get all embedding layer metadata for a file
+   * Returns metadata only (no points)
+   */
+  async getLayerMetadata(fileId: string): Promise<EmbeddingLayerMetadata[]> {
+    console.log(`[Embedding Storage] Getting layer metadata for file ${fileId}`);
+
+    try {
+      const layers = await executeQuery<any>(`
+        SELECT
+          l.id,
+          l.name,
+          l.is_active,
+          l.composition_mode,
+          l.created_at,
+          COUNT(p.point_id) as point_count
+        FROM embedding_layers l
+        LEFT JOIN embedding_points p ON l.id = p.layer_id
+        WHERE l.file_id = ?
+        GROUP BY l.id, l.name, l.is_active, l.composition_mode, l.created_at
+        ORDER BY l.created_at DESC
+      `, [fileId]);
+
+      console.log(`[Embedding Storage] ✓ Found ${layers.length} layers`);
+
+      return layers.map(l => ({
+        id: l.id,
+        name: l.name,
+        isActive: l.is_active,
+        pointCount: typeof l.point_count === 'bigint' ? Number(l.point_count) : l.point_count,
+        compositionMode: l.composition_mode,
+        createdAt: l.created_at
+      } as EmbeddingLayerMetadata));
+
+    } catch (error) {
+      console.error('[Embedding Storage] Error getting layer metadata:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Switch active layer for a file
+   * Simple UPDATE query - no file system operations needed
+   */
+  async setActiveLayer(fileId: string, layerId: string): Promise<void> {
+    console.log(`[Embedding Storage] Setting active layer to ${layerId}`);
+
+    try {
+      await executeQuery(`
+        UPDATE embedding_layers
+        SET is_active = CASE WHEN id = ? THEN TRUE ELSE FALSE END,
+            last_accessed_at = CASE WHEN id = ? THEN CURRENT_TIMESTAMP ELSE last_accessed_at END
+        WHERE file_id = ?
+      `, [layerId, layerId, fileId]);
+
+      console.log('[Embedding Storage] ✓ Active layer updated');
+
+    } catch (error) {
+      console.error('[Embedding Storage] Error setting active layer:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete embedding layer and all its points
+   * Cascades to delete all associated points
+   */
+  async deleteLayer(layerId: string): Promise<void> {
+    console.log(`[Embedding Storage] Deleting layer ${layerId}`);
+
+    const conn = await getConnection();
+
+    try {
+      await conn.query('BEGIN TRANSACTION');
+
+      // Delete points first
+      await conn.query(`
+        DELETE FROM embedding_points WHERE layer_id = ?
+      `, [layerId]);
+
+      // Delete layer metadata
+      await conn.query(`
+        DELETE FROM embedding_layers WHERE id = ?
+      `, [layerId]);
+
+      await conn.query('COMMIT');
+      console.log('[Embedding Storage] ✓ Layer deleted');
+
+    } catch (error) {
+      await conn.query('ROLLBACK');
+      console.error('[Embedding Storage] Error deleting layer:', error);
+      throw error;
+    } finally {
+      await conn.close();
     }
   }
 }
 
-export const opfsManager = new OPFSManager();
-
-// High-level API for switching between layers
-export async function switchEmbeddingLayer(
-  fileId: string,
-  newLayerId: string
-): Promise<void> {
-  // Get current active layer
-  const currentLayer = await embeddingDB.getActiveEmbeddingLayer(fileId);
-
-  // Save current layer to OPFS if it exists
-  if (currentLayer) {
-    await opfsManager.saveLayerToOPFS(currentLayer);
-    await embeddingDB.deleteActiveEmbeddingLayer(currentLayer.id);
-  }
-
-  // Load new layer from OPFS
-  const newLayer = await opfsManager.loadLayerFromOPFS(newLayerId);
-
-  // Set as active in IndexedDB
-  await embeddingDB.setActiveEmbeddingLayer(newLayer);
-
-  // Update metadata
-  await embeddingDB.updateActiveLayer(fileId, newLayerId);
-}
+// Export singleton instance
+export const embeddingStorage = new EmbeddingStorage();
 
 // Generate unique ID for embedding layers
 export function generateEmbeddingId(): string {
