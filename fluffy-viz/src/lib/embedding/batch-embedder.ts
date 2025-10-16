@@ -6,6 +6,8 @@
 import { embedMany } from 'ai';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createCohere } from '@ai-sdk/cohere';
+import { createGoogleGenerativeAI } from '@ai-sdk/google';
+import { createMistral } from '@ai-sdk/mistral';
 import type { GenerationProgress } from '@/types/embedding';
 
 const BATCH_SIZE = 100; // Process 100 texts per batch
@@ -35,6 +37,16 @@ function getEmbeddingModel(provider: string, model: string, apiKey: string) {
     case 'cohere': {
       const cohere = createCohere({ apiKey });
       return cohere.textEmbeddingModel(model);
+    }
+
+    case 'google': {
+      const google = createGoogleGenerativeAI({ apiKey });
+      return google.textEmbeddingModel(model);
+    }
+
+    case 'mistral': {
+      const mistral = createMistral({ apiKey });
+      return mistral.textEmbeddingModel(model);
     }
 
     // Add more providers as needed
