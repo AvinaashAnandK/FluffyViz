@@ -16,6 +16,11 @@ const customJestConfig = {
     '**/__tests__/**/*.test.[jt]s?(x)',
     '**/?(*.)+(spec|test).[jt]s?(x)'
   ],
+  // Skip DuckDB tests - they require actual browser environment with WASM support
+  testPathIgnorePatterns: [
+    '/node_modules/',
+    '/src/lib/duckdb/__tests__/',
+  ],
 }
 
 // createJestConfig is exported this way to ensure that next/jest can load the Next.js config which is async
