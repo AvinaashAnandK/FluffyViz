@@ -1,9 +1,11 @@
 'use client'
 
 import { useState } from 'react'
-import { Plus, Loader2 } from 'lucide-react'
+import { Plus, Loader2, ArrowUpDown, ArrowUp, ArrowDown, ChevronLeft, ChevronRight } from 'lucide-react'
 import type { Column, SpreadsheetData } from './SpreadsheetEditor'
 import { getTemplateGroups } from '@/config/ai-column-templates'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -26,6 +28,18 @@ interface SpreadsheetTableProps {
   onCellChange: (rowIndex: number, columnId: string, value: any) => void
   onColumnTemplateSelect: (template: string) => void
   loadingCells?: Set<string>
+  // Pagination props
+  currentPage?: number
+  totalRows?: number
+  pageSize?: number
+  onPageChange?: (page: number) => void
+  // Sorting props
+  sortColumn?: string | null
+  sortDirection?: 'asc' | 'desc' | null
+  onSort?: (column: string) => void
+  // Filter props
+  columnFilters?: Record<string, string>
+  onFilterChange?: (column: string, value: string) => void
 }
 
 // Get template groups with hierarchy
@@ -47,7 +61,16 @@ export function SpreadsheetTable({
   onAddColumn,
   onCellChange,
   onColumnTemplateSelect,
-  loadingCells = new Set()
+  loadingCells = new Set(),
+  currentPage = 1,
+  totalRows = 0,
+  pageSize = 100,
+  onPageChange,
+  sortColumn = null,
+  sortDirection = null,
+  onSort,
+  columnFilters = {},
+  onFilterChange
 }: SpreadsheetTableProps) {
   const [editingCell, setEditingCell] = useState<{row: number, col: string} | null>(null)
   const [editValue, setEditValue] = useState('')
@@ -56,6 +79,26 @@ export function SpreadsheetTable({
   const [dragRange, setDragRange] = useState<{startRow: number, endRow: number, col: string} | null>(null)
 
   const visibleColumns = columns.filter(col => col.visible)
+  const totalPages = Math.ceil(totalRows / pageSize)
+
+  const handleSort = (columnId: string) => {
+    if (onSort) {
+      onSort(columnId)
+    }
+  }
+
+  const getSortIcon = (columnId: string) => {
+    if (sortColumn !== columnId) {
+      return <ArrowUpDown className="w-3 h-3 opacity-50" />
+    }
+    if (sortDirection === 'asc') {
+      return <ArrowUp className="w-3 h-3" />
+    }
+    if (sortDirection === 'desc') {
+      return <ArrowDown className="w-3 h-3" />
+    }
+    return <ArrowUpDown className="w-3 h-3 opacity-50" />
+  }
 
   const handleCellClick = (rowIndex: number, columnId: string, currentValue: any) => {
     setEditingCell({ row: rowIndex, col: columnId })
@@ -193,10 +236,16 @@ export function SpreadsheetTable({
                   <TooltipProvider>
                     <Tooltip>
                       <TooltipTrigger asChild>
-                        <button className="w-full p-3 text-left hover:bg-accent hover:text-accent-foreground transition-colors">
-                          <div className="flex flex-col">
-                            <span className="font-medium text-foreground">{column.name}</span>
-                            <span className="text-xs text-muted-foreground">{column.type}</span>
+                        <button
+                          className="w-full p-3 text-left hover:bg-accent hover:text-accent-foreground transition-colors"
+                          onClick={() => handleSort(column.id)}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex flex-col flex-1">
+                              <span className="font-medium text-foreground">{column.name}</span>
+                              <span className="text-xs text-muted-foreground">{column.type}</span>
+                            </div>
+                            {getSortIcon(column.id)}
                           </div>
                         </button>
                       </TooltipTrigger>
@@ -209,10 +258,16 @@ export function SpreadsheetTable({
                     </Tooltip>
                   </TooltipProvider>
                 ) : (
-                  <button className="w-full p-3 text-left hover:bg-accent hover:text-accent-foreground transition-colors">
-                    <div className="flex flex-col">
-                      <span className="font-medium text-foreground">{column.name}</span>
-                      <span className="text-xs text-muted-foreground">{column.type}</span>
+                  <button
+                    className="w-full p-3 text-left hover:bg-accent hover:text-accent-foreground transition-colors"
+                    onClick={() => handleSort(column.id)}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex flex-col flex-1">
+                        <span className="font-medium text-foreground">{column.name}</span>
+                        <span className="text-xs text-muted-foreground">{column.type}</span>
+                      </div>
+                      {getSortIcon(column.id)}
                     </div>
                   </button>
                 )}
@@ -325,6 +380,37 @@ export function SpreadsheetTable({
         </tbody>
       </table>
 
+      {/* Pagination controls */}
+      {onPageChange && totalRows > 0 && (
+        <div className="flex items-center justify-between px-4 py-3 border-t border-border bg-muted/30">
+          <div className="text-sm text-muted-foreground">
+            Showing {Math.min((currentPage - 1) * pageSize + 1, totalRows)} to {Math.min(currentPage * pageSize, totalRows)} of {totalRows} rows
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onPageChange(currentPage - 1)}
+              disabled={currentPage === 1}
+            >
+              <ChevronLeft className="w-4 h-4" />
+              Previous
+            </Button>
+            <div className="text-sm text-muted-foreground">
+              Page {currentPage} of {totalPages}
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onPageChange(currentPage + 1)}
+              disabled={currentPage >= totalPages}
+            >
+              Next
+              <ChevronRight className="w-4 h-4" />
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -54,7 +54,14 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
   const [loadingCells, setLoadingCells] = useState<Set<string>>(new Set())
   const [activeTab, setActiveTab] = useState<'spreadsheet' | 'embeddings'>('spreadsheet')
 
-  // Load file data on mount
+  // Pagination and sorting state
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize] = useState(100)
+  const [totalRows, setTotalRows] = useState(0)
+  const [sortColumn, setSortColumn] = useState<string | null>(null)
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc' | null>(null)
+
+  // Load file data with pagination and sorting
   useEffect(() => {
     const loadFileData = async () => {
       try {
@@ -62,12 +69,28 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
         if (storedFile) {
           setFileName(storedFile.name)
 
-          // Query data directly from DuckDB
-          const { getFileData } = await import('@/lib/duckdb')
-          const parsedData = await getFileData(fileId)
+          // Import DuckDB operations
+          const { queryFileData, getFileRowCount, getFileData } = await import('@/lib/duckdb')
+
+          // Get total row count for pagination
+          const count = await getFileRowCount(fileId)
+          setTotalRows(count)
+
+          // Build sort order string
+          let orderBy = 'row_index ASC'
+          if (sortColumn && sortDirection) {
+            orderBy = `"${sortColumn}" ${sortDirection.toUpperCase()}`
+          }
+
+          // Query paginated data
+          const parsedData = await queryFileData(fileId, {
+            limit: pageSize,
+            offset: (currentPage - 1) * pageSize,
+            orderBy
+          })
           setData(parsedData)
 
-          // Generate columns from the first data row
+          // Generate columns from first row (or all data if no pagination data yet)
           if (parsedData.length > 0) {
             const generatedColumns = Object.keys(parsedData[0])
               .filter(key => key !== 'row_index') // Exclude internal row_index column
@@ -78,6 +101,20 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
                 visible: true
               }))
             setColumns(generatedColumns)
+          } else if (count > 0) {
+            // If no data on this page but rows exist, load first page to get columns
+            const firstPageData = await getFileData(fileId)
+            if (firstPageData.length > 0) {
+              const generatedColumns = Object.keys(firstPageData[0])
+                .filter(key => key !== 'row_index')
+                .map((key) => ({
+                  id: key,
+                  name: key,
+                  type: typeof firstPageData[0][key] === 'number' ? 'number' : 'string',
+                  visible: true
+                }))
+              setColumns(generatedColumns)
+            }
           }
         }
       } catch (error) {
@@ -88,7 +125,7 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
     }
 
     loadFileData()
-  }, [fileId, getFile])
+  }, [fileId, getFile, currentPage, pageSize, sortColumn, sortDirection])
 
   const addColumn = (columnData: {
     name: string
@@ -211,6 +248,26 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
     )
   }
 
+  const handleSort = (columnId: string) => {
+    if (sortColumn === columnId) {
+      // Cycle through: asc -> desc -> null
+      if (sortDirection === 'asc') {
+        setSortDirection('desc')
+      } else if (sortDirection === 'desc') {
+        setSortColumn(null)
+        setSortDirection(null)
+      }
+    } else {
+      // New column, start with asc
+      setSortColumn(columnId)
+      setSortDirection('asc')
+    }
+  }
+
+  const handlePageChange = (newPage: number) => {
+    setCurrentPage(newPage)
+  }
+
   const handleSave = async () => {
     // Convert data back to CSV format using PapaParse for proper escaping
     const csvContent = convertToCSV(data, columns)
@@ -321,6 +378,13 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
                   onCellChange={updateCellValue}
                   onColumnTemplateSelect={setSelectedColumnTemplate}
                   loadingCells={loadingCells}
+                  currentPage={currentPage}
+                  totalRows={totalRows}
+                  pageSize={pageSize}
+                  onPageChange={handlePageChange}
+                  sortColumn={sortColumn}
+                  sortDirection={sortDirection}
+                  onSort={handleSort}
                 />
               </CardContent>
 
