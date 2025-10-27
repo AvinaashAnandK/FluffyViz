@@ -6,18 +6,35 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
+import dynamic from 'next/dynamic';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card } from '@/components/ui/card';
 import { EmbeddingWizard } from './embedding-wizard';
-import { EmbeddingVisualization } from './embedding-visualization';
 import type { WizardState, ActiveEmbeddingLayer, EmbeddingLayerMetadata, EmbeddingPoint } from '@/types/embedding';
 import { embeddingStorage, generateEmbeddingId } from '@/lib/embedding/storage';
 import { composeText, addComposedTextColumn } from '@/lib/embedding/text-composer';
 import { batchEmbed } from '@/lib/embedding/batch-embedder';
 import { computeUMAPProjection } from '@/lib/embedding/umap-reducer';
-import { Download } from 'lucide-react';
+import { Download, Loader2 } from 'lucide-react';
 import { loadProviderSettings, getProviderApiKey, type ProviderKey } from '@/config/provider-settings';
+
+// Dynamically import EmbeddingVisualization with SSR disabled to prevent
+// embedding-atlas from being loaded during server-side rendering
+const EmbeddingVisualization = dynamic(
+  () => import('./embedding-visualization').then(mod => ({ default: mod.EmbeddingVisualization })),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="w-full h-full flex items-center justify-center" style={{ minHeight: '400px' }}>
+        <div className="flex flex-col items-center gap-2">
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+          <p className="text-sm text-muted-foreground">Loading visualization...</p>
+        </div>
+      </div>
+    )
+  }
+);
 
 interface AgentTraceViewerProps {
   fileId: string;
@@ -194,7 +211,7 @@ export function AgentTraceViewer({ fileId, data, onDataUpdate }: AgentTraceViewe
   }
 
   return (
-    <div className="flex flex-col h-full gap-4 p-4">
+    <div className="flex flex-col h-full gap-4 p-2">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">

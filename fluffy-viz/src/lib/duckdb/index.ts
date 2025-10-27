@@ -3,7 +3,7 @@
  */
 
 // Client
-export { getDuckDB, getConnection, executeQuery, resetDatabase } from './client';
+export { getDuckDB, getConnection, executeQuery, resetDatabase, persistDatabase } from './client';
 
 // Schema
 export { initializeSchema, isSchemaInitialized, getSchemaVersion, dropAllTables } from './schema';

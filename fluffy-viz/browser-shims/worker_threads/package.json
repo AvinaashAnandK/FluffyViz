@@ -1,0 +1,6 @@
+{
+  "name": "worker_threads",
+  "version": "1.0.0",
+  "main": "index.js",
+  "description": "Browser-compatible shim for Node.js worker_threads module"
+}

@@ -60,34 +60,38 @@ async function initializeDatabase(): Promise<duckdb.AsyncDuckDB> {
     // Create logger
     const logger = new duckdb.ConsoleLogger(duckdb.LogLevel.WARNING);
 
-    // Initialize DuckDB
-    const db = new duckdb.AsyncDuckDB(logger, worker);
-    await db.instantiate(bundle.mainModule);
-
-    console.log('[DuckDB] Database instantiated');
-
     // Configure OPFS persistence if supported
+    let persistentPath: string | undefined;
     try {
       if ('storage' in navigator && 'getDirectory' in navigator.storage) {
         console.log('[DuckDB] Configuring OPFS persistence...');
-
-        // Get OPFS directory handle
-        const opfsRoot = await navigator.storage.getDirectory();
-
-        // Register file handle for persistence
-        await db.registerFileHandle(
-          'fluffyviz.db',
-          opfsRoot,
-          duckdb.DuckDBDataProtocol.BROWSER_FSACCESS,
-          true // create if not exists
-        );
-
-        console.log('[DuckDB] OPFS persistence enabled');
+        persistentPath = 'fluffyviz.db';
+        console.log('[DuckDB] OPFS persistence will be enabled');
       } else {
         console.warn('[DuckDB] OPFS not supported, using in-memory database');
       }
     } catch (opfsError) {
-      console.warn('[DuckDB] OPFS setup failed, using in-memory database:', opfsError);
+      console.warn('[DuckDB] OPFS check failed, using in-memory database:', opfsError);
+    }
+
+    // Initialize DuckDB
+    const db = new duckdb.AsyncDuckDB(logger, worker);
+    await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
+
+    console.log('[DuckDB] Database instantiated');
+
+    // Open database with OPFS persistence if supported
+    if (persistentPath) {
+      try {
+        // Use native OPFS support with opfs:// path
+        await db.open({
+          path: `opfs://${persistentPath}`,
+          accessMode: duckdb.DuckDBAccessMode.READ_WRITE
+        });
+        console.log(`[DuckDB] Opened database with OPFS persistence: ${persistentPath}`);
+      } catch (opfsError) {
+        console.warn('[DuckDB] OPFS open failed, using in-memory database:', opfsError);
+      }
     }
 
     console.log('[DuckDB] Initialization complete');
@@ -131,6 +135,40 @@ export async function executeQuery<T = unknown>(
     return result.toArray() as T[];
   } finally {
     await conn.close();
+  }
+}
+
+/**
+ * Persist the current database state to OPFS
+ * Uses CHECKPOINT to write from WAL to the database file
+ */
+export async function persistDatabase(): Promise<void> {
+  try {
+    if (!dbInstance) {
+      console.warn('[DuckDB] Cannot persist - database not initialized');
+      return;
+    }
+
+    if (!('storage' in navigator && 'getDirectory' in navigator.storage)) {
+      console.warn('[DuckDB] OPFS not supported, cannot persist');
+      return;
+    }
+
+    console.log('[DuckDB] Persisting database to OPFS...');
+
+    const conn = await dbInstance.connect();
+    try {
+      // CHECKPOINT writes from the WAL to the OPFS database file
+      await conn.query('CHECKPOINT;');
+      console.log('[DuckDB] Database persisted to OPFS');
+    } catch (persistError) {
+      console.error('[DuckDB] Persist failed:', persistError);
+      throw persistError;
+    } finally {
+      await conn.close();
+    }
+  } catch (error) {
+    console.error('[DuckDB] Failed to persist database:', error);
   }
 }
 

@@ -3,7 +3,7 @@
  * Replaces IndexedDB for file metadata and data storage
  */
 
-import { executeQuery } from './client';
+import { executeQuery, persistDatabase } from './client';
 import { createFileTable, deleteFileTable } from './operations';
 import type { FileMetadata } from './types';
 import { parseFileContent } from '../format-parser';
@@ -99,6 +99,10 @@ export async function saveFileToDuckDB(
     }
 
     console.log(`[DuckDB File Storage] ✓ File saved successfully: ${id}`);
+
+    // Persist database to OPFS
+    await persistDatabase();
+
     return id;
 
   } catch (error) {

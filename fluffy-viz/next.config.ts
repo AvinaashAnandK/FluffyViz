@@ -3,30 +3,26 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   // Webpack configuration for DuckDB WASM
   webpack: (config, { isServer }) => {
-    // Only apply to client-side builds
-    if (!isServer) {
-      // Handle WASM files
-      config.module.rules.push({
-        test: /\.wasm$/,
-        type: 'asset/resource',
-      });
-
-      // Handle worker files
-      config.module.rules.push({
-        test: /\.worker\.js$/,
-        type: 'asset/resource',
-      });
-    }
-
-    // Fix for WASM modules
+    // Enable WASM support
     config.experiments = {
       ...config.experiments,
       asyncWebAssembly: true,
       layers: true,
     };
 
+    // Note: client-side resolve.alias causes Turbopack to crash
+    // with "boolean values are invalid in exports field entries"
+
     return config;
   },
+
+  // Turbopack configuration for embedding-atlas compatibility
+  // Note: Currently turbopack has issues with embedding-atlas
+  // experimental: {
+  //   turbo: {
+  //     resolveExtensions: ['.js', '.jsx', '.ts', '.tsx', '.json'],
+  //   },
+  // },
 
   // Security headers required for SharedArrayBuffer (DuckDB threading)
   async headers() {

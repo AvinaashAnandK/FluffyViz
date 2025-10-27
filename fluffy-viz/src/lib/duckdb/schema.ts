@@ -8,7 +8,7 @@
  * - embedding_points: Embedding vector data
  */
 
-import { executeQuery } from './client';
+import { executeQuery, persistDatabase } from './client';
 
 /**
  * Initialize the database schema
@@ -64,10 +64,29 @@ export async function initializeSchema(): Promise<void> {
     `);
     console.log('[DuckDB Schema] ✓ Embedding points table created');
 
+    // Create view for embedding visualization with x, y columns
+    // This view extracts array elements for embedding-atlas compatibility
+    await executeQuery(`
+      CREATE OR REPLACE VIEW embedding_points_view AS
+      SELECT
+        layer_id,
+        point_id,
+        coordinates_2d[1] AS x,
+        coordinates_2d[2] AS y,
+        composed_text,
+        label,
+        source_row_indices
+      FROM embedding_points
+    `);
+    console.log('[DuckDB Schema] ✓ Embedding points view created');
+
     // Create indexes for common queries
     await createIndexes();
 
     console.log('[DuckDB Schema] Schema initialization complete');
+
+    // Persist the schema to OPFS
+    await persistDatabase();
   } catch (error) {
     console.error('[DuckDB Schema] Failed to initialize schema:', error);
     throw error;
