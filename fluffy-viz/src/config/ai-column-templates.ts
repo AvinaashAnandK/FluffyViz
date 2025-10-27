@@ -1,4 +1,4 @@
-import { Languages, Tags, FileText, TrendingUp, FolderOpen, Wand2 } from 'lucide-react'
+import { Languages, Tags, FileText, TrendingUp, FolderOpen, Wand2, MessageSquare } from 'lucide-react'
 
 export interface TemplateVariable {
   id: string
@@ -32,7 +32,7 @@ export interface AIColumnTemplate {
   name: string
   description: string
   icon: string
-  category: 'default' | 'single-column-custom' | 'multi-column-custom'
+  category: 'default' | 'single-column-custom' | 'multi-column-custom' | 'conversational-history'
   promptFile: string
   variables?: string[]
   examples?: string[]
@@ -141,6 +141,20 @@ export const COLUMN_TEMPLATES: Record<string, AIColumnTemplate> = {
       'Cross-reference information',
       'Complex multi-field analysis'
     ]
+  },
+  conversational_history: {
+    id: 'conversational_history',
+    name: 'Add Conversational History',
+    description: 'Aggregate conversation turns into formatted history',
+    icon: 'MessageSquare',
+    category: 'conversational-history',
+    promptFile: '/config/prompts/conversational-history.yaml',
+    variables: [],
+    examples: [
+      'Build conversation context for each turn',
+      'Create full conversation history',
+      'Format multi-turn dialogues'
+    ]
   }
 }
 
@@ -183,6 +197,10 @@ export function getTemplateGroups(): TemplateGroup[] {
     {
       heading: 'Default Augmentations',
       templates: Object.values(COLUMN_TEMPLATES).filter(t => t.category === 'default')
+    },
+    {
+      heading: 'Conversational History',
+      templates: Object.values(COLUMN_TEMPLATES).filter(t => t.category === 'conversational-history')
     },
     {
       heading: 'Single Column Custom Augmentations',

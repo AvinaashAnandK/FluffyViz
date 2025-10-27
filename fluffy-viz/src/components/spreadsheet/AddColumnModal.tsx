@@ -5,6 +5,7 @@ import { X, AlertCircle } from 'lucide-react'
 import { ModelSelector } from './ModelSelector'
 import { ProviderSelector } from './ProviderSelector'
 import { PromptComposer } from './PromptComposer'
+import { ConversationalHistoryConfig, ConversationalHistoryConfigData } from './ConversationalHistoryConfig'
 import { Model, ModelProvider } from '@/types/models'
 import { getDefaultProviderForModel } from '@/lib/providers'
 import { loadPromptConfig } from '@/config/ai-column-templates'
@@ -41,6 +42,10 @@ export function AddColumnModal({
   const [templateConfig, setTemplateConfig] = useState<any>(null)
   const [providerConfig, setProviderConfig] = useState<ProviderSettings | null>(null)
   const [loadingConfig, setLoadingConfig] = useState(true)
+  const [convHistoryConfig, setConvHistoryConfig] = useState<ConversationalHistoryConfigData | null>(null)
+
+  // Check if current template is conversational history
+  const isConversationalHistory = template === 'conversational_history'
 
   // Load provider configuration on mount
   useEffect(() => {
@@ -109,14 +114,31 @@ export function AddColumnModal({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (!columnName.trim() || !prompt.trim() || !promptValid || !selectedModel || !selectedProvider) return
 
-    onAddColumn({
-      name: columnName.trim(),
-      prompt: prompt.trim(),
-      model: selectedModel,
-      provider: selectedProvider
-    })
+    // For conversational history, validation is different
+    if (isConversationalHistory) {
+      if (!columnName.trim() || !convHistoryConfig) return
+
+      // Build a special prompt that contains the config
+      const convPrompt = JSON.stringify(convHistoryConfig)
+
+      onAddColumn({
+        name: columnName.trim(),
+        prompt: convPrompt, // Store config as JSON in prompt
+        model: selectedModel || { id: 'none', name: 'N/A', provider: 'none' } as Model,
+        provider: selectedProvider || { id: 'none', displayName: 'N/A', models: [] } as ModelProvider
+      })
+    } else {
+      // Regular column validation
+      if (!columnName.trim() || !prompt.trim() || !promptValid || !selectedModel || !selectedProvider) return
+
+      onAddColumn({
+        name: columnName.trim(),
+        prompt: prompt.trim(),
+        model: selectedModel,
+        provider: selectedProvider
+      })
+    }
 
     // Reset form
     setColumnName('')
@@ -124,6 +146,7 @@ export function AddColumnModal({
     setPromptValid(false)
     setSelectedModel(undefined)
     setSelectedProvider(undefined)
+    setConvHistoryConfig(null)
   }
 
   return (
@@ -197,39 +220,51 @@ export function AddColumnModal({
               />
             </div>
 
-            {/* Prompt Composer */}
-            <PromptComposer
-              availableColumns={columnsMeta}
-              initialTemplate={templateConfig}
-              onPromptChange={handlePromptChange}
-            />
-
-            {/* Provider and Model Selection */}
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Provider ({enabledProviders.length} available)
-                </label>
-                <ProviderSelector
-                  selectedProvider={selectedProvider}
-                  onProviderSelect={handleProviderSelect}
-                  className="w-full"
+            {/* Conditional content based on template type */}
+            {isConversationalHistory ? (
+              /* Conversational History Configuration */
+              <ConversationalHistoryConfig
+                availableColumns={availableColumns}
+                dataRows={dataRows}
+                onConfigChange={setConvHistoryConfig}
+              />
+            ) : (
+              <>
+                {/* Prompt Composer */}
+                <PromptComposer
+                  availableColumns={columnsMeta}
+                  initialTemplate={templateConfig}
+                  onPromptChange={handlePromptChange}
                 />
-              </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Model {selectedProvider ? `(filtered by ${selectedProvider.displayName})` : ''}
-                </label>
-                <ModelSelector
-                  selectedModel={selectedModel}
-                  onModelSelect={handleModelSelect}
-                  placeholder="Search and select a model..."
-                  className="w-full"
-                  filterByProvider={selectedProvider?.id}
-                />
-              </div>
-            </div>
+                {/* Provider and Model Selection */}
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                      Provider ({enabledProviders.length} available)
+                    </label>
+                    <ProviderSelector
+                      selectedProvider={selectedProvider}
+                      onProviderSelect={handleProviderSelect}
+                      className="w-full"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                      Model {selectedProvider ? `(filtered by ${selectedProvider.displayName})` : ''}
+                    </label>
+                    <ModelSelector
+                      selectedModel={selectedModel}
+                      onModelSelect={handleModelSelect}
+                      placeholder="Search and select a model..."
+                      className="w-full"
+                      filterByProvider={selectedProvider?.id}
+                    />
+                  </div>
+                </div>
+              </>
+            )}
           </form>
           </div>
         )}
@@ -240,7 +275,11 @@ export function AddColumnModal({
           <button
             type="submit"
             onClick={handleSubmit}
-            disabled={!selectedModel || !selectedProvider || !columnName.trim() || !prompt.trim() || !promptValid}
+            disabled={
+              isConversationalHistory
+                ? !columnName.trim() || !convHistoryConfig
+                : !selectedModel || !selectedProvider || !columnName.trim() || !prompt.trim() || !promptValid
+            }
             className="w-full px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed rounded-md transition-colors"
           >
             Add Column
