@@ -19,6 +19,7 @@ import {
   parseConversationalHistoryConfig,
   generateConversationalHistory
 } from '@/lib/conversational-history'
+import { addColumn as addColumnToDuckDB, batchUpdateColumn, updateCellValue as updateCellInDuckDB } from '@/lib/duckdb'
 import Papa from 'papaparse'
 import {
   Select,
@@ -199,7 +200,7 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
     loadFileData()
   }, [fileId, getFile, currentPage, pageSize, sortColumn, sortDirection, filters])
 
-  const addColumn = (columnData: {
+  const addColumn = async (columnData: {
     name: string
     prompt: string
     model: Model
@@ -226,11 +227,19 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
 
     setColumns(prev => [...prev, newColumn])
 
-    // Add empty data for the new column to all rows
+    // Add empty data for the new column to all rows (in-memory)
     setData(prev => prev.map(row => ({
       ...row,
       [newColumn.id]: ''
     })))
+
+    // Persist column to DuckDB
+    try {
+      await addColumnToDuckDB(fileId, newColumn.id, 'TEXT', '')
+      console.log(`[SpreadsheetEditor] Column ${newColumn.id} added to DuckDB`)
+    } catch (error) {
+      console.error('[SpreadsheetEditor] Failed to add column to DuckDB:', error)
+    }
 
     setIsAddColumnModalOpen(false)
     setSelectedColumnTemplate(null)
@@ -267,13 +276,25 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
           // Generate conversational history synchronously
           const histories = generateConversationalHistory(data, convConfig)
 
-          // Update all cells at once
+          // Update all cells at once (in-memory)
           setData(prev => {
             return prev.map((row, rowIndex) => ({
               ...row,
               [column.id]: histories[rowIndex]
             }))
           })
+
+          // Persist to DuckDB
+          try {
+            const updates = data.map((row, rowIndex) => ({
+              rowIndex: row.row_index ?? rowIndex,
+              value: histories[rowIndex]
+            }))
+            await batchUpdateColumn(fileId, column.id, updates)
+            console.log(`[SpreadsheetEditor] Conversational history persisted to DuckDB for column ${column.id}`)
+          } catch (error) {
+            console.error('[SpreadsheetEditor] Failed to persist conversational history to DuckDB:', error)
+          }
 
           // Clear all loading cells
           setLoadingCells(new Set())
@@ -286,6 +307,9 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
       // Regular AI column generation
       // Extract column references from prompt (e.g., {{column_name}})
       const columnReferences = extractColumnReferences(columnData.prompt)
+
+      // Track generated values for batch update to DuckDB
+      const generatedValues: Array<{ rowIndex: number; value: string }> = []
 
       // Generate data for all rows with cell-level updates
       await generateColumnData(
@@ -300,6 +324,10 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
           // Update cell as soon as it completes
           // Ensure LLM response is stored as plain string (prevent any parsing)
           const cellValue = String(result.content || result.error || '[Error]')
+
+          // Track for DuckDB batch update
+          const dbRowIndex = data[rowIndex]?.row_index ?? rowIndex
+          generatedValues.push({ rowIndex: dbRowIndex, value: cellValue })
 
           setData(prev => {
             const updated = [...prev]
@@ -318,6 +346,16 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
           })
         }
       )
+
+      // Persist to DuckDB after all generation is complete
+      if (generatedValues.length > 0) {
+        try {
+          await batchUpdateColumn(fileId, column.id, generatedValues)
+          console.log(`[SpreadsheetEditor] AI column data persisted to DuckDB for column ${column.id}`)
+        } catch (error) {
+          console.error('[SpreadsheetEditor] Failed to persist AI column data to DuckDB:', error)
+        }
+      }
     } catch (error) {
       console.error('Error generating column data:', error)
       // Clear all loading cells on error
@@ -334,7 +372,8 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
     return matches.map(m => m.replace(/\{\{|\}\}/g, '').trim())
   }
 
-  const updateCellValue = (rowIndex: number, columnId: string, value: any) => {
+  const updateCellValue = async (rowIndex: number, columnId: string, value: any) => {
+    // Update in-memory state
     setData(prev =>
       prev.map((row, index) =>
         index === rowIndex
@@ -342,6 +381,15 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
           : row
       )
     )
+
+    // Persist to DuckDB
+    try {
+      const dbRowIndex = data[rowIndex]?.row_index ?? rowIndex
+      await updateCellInDuckDB(fileId, dbRowIndex, columnId, value)
+      console.log(`[SpreadsheetEditor] Cell [${dbRowIndex}, ${columnId}] updated in DuckDB`)
+    } catch (error) {
+      console.error('[SpreadsheetEditor] Failed to update cell in DuckDB:', error)
+    }
   }
 
   const handleSort = (columnId: string) => {
