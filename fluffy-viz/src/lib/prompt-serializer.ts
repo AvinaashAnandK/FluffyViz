@@ -11,6 +11,7 @@ export interface ColumnMeta {
 
 export interface SerializedPromptResult {
   prompt: string
+  previewPrompt: string // Human-readable version with display names
   unmappedVariables: { id: string; displayName: string }[]
   isValid: boolean
   mappedVariableCount: number
@@ -26,12 +27,14 @@ export function serializePrompt(
 ): SerializedPromptResult {
   const unmappedVariables: { id: string; displayName: string }[] = []
   let prompt = ''
+  let previewPrompt = ''
   let mappedVariableCount = 0
   let totalVariableCount = 0
 
   function traverseNode(node: JSONContent) {
     if (node.type === 'text') {
       prompt += node.text || ''
+      previewPrompt += node.text || ''
     } else if (node.type === 'variableNode') {
       const attrs = node.attrs as VariableNodeAttributes
       const mapping = mappings[attrs.id]
@@ -39,12 +42,15 @@ export function serializePrompt(
       totalVariableCount += 1
 
       if (mapping && attrs.mappedColumnId) {
-        // Mapped variable - use {{column_slug}} syntax
+        // Mapped variable - use {{column_slug}} syntax for actual prompt
         prompt += `{{${mapping.slug}}}`
+        // Use display name for preview
+        previewPrompt += `{{${mapping.displayName}}}`
         mappedVariableCount += 1
       } else if (attrs.defaultValue != null) {
         // Optional variable with default text
         prompt += attrs.defaultValue
+        previewPrompt += attrs.defaultValue
       } else {
         // Unmapped variable - track for validation
         if (attrs.required !== false) {
@@ -54,9 +60,11 @@ export function serializePrompt(
           })
         }
         prompt += `{{${attrs.displayName}}}`
+        previewPrompt += `{{${attrs.displayName}}}`
       }
     } else if (node.type === 'hardBreak') {
       prompt += '\n'
+      previewPrompt += '\n'
     } else if (node.type === 'paragraph') {
       // Process paragraph content
       if (node.content) {
@@ -64,6 +72,7 @@ export function serializePrompt(
       }
       // Add newline after paragraph (except for last one)
       prompt += '\n'
+      previewPrompt += '\n'
     } else if (node.type === 'doc') {
       // Process document content
       if (node.content) {
@@ -81,9 +90,11 @@ export function serializePrompt(
 
   // Trim trailing newlines
   prompt = prompt.trim()
+  previewPrompt = previewPrompt.trim()
 
   return {
     prompt,
+    previewPrompt,
     unmappedVariables,
     isValid: unmappedVariables.length === 0,
     mappedVariableCount,

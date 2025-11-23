@@ -99,3 +99,52 @@ export interface FileTableConfig {
  * Generic row data (for file_data_{id} tables)
  */
 export type RowData = Record<string, unknown>;
+
+/**
+ * Column type classification
+ */
+export type ColumnType = 'data' | 'ai-generated' | 'computed';
+
+/**
+ * Column metadata for AI-generated or computed columns
+ */
+export interface ColumnMetadata {
+  fileId: string;
+  columnId: string;
+  columnName?: string;  // User-friendly column name
+  columnType: ColumnType;
+  model?: string;
+  provider?: string;
+  prompt?: string;
+  createdAt?: number;
+}
+
+/**
+ * Error types for AI generation failures
+ */
+export type FailureType =
+  | 'rate_limit'
+  | 'network'
+  | 'auth'
+  | 'invalid_request'
+  | 'server_error';
+
+/**
+ * Cell status for AI-generated cells
+ */
+export type CellStatus = 'pending' | 'success' | 'failed';
+
+/**
+ * Cell metadata for AI-generated cells
+ */
+export interface CellMetadata {
+  fileId: string;
+  columnId: string;
+  rowIndex: number;
+  status: CellStatus;
+  error?: string;
+  errorType?: FailureType;
+  edited: boolean;
+  originalValue?: string;
+  lastEditTime?: number;
+}

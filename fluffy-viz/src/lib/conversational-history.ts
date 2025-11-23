@@ -13,11 +13,13 @@ export interface ConversationTurn {
  * Generate conversational history for each row
  * @param data Array of all rows
  * @param config Conversation configuration
+ * @param columnIdToNameMap Map of column IDs to display names
  * @returns Array of formatted conversation histories (one per row)
  */
 export function generateConversationalHistory(
   data: ConversationTurn[],
-  config: ConversationalHistoryConfigData
+  config: ConversationalHistoryConfigData,
+  columnIdToNameMap?: Map<string, string>
 ): string[] {
   const {
     conversationIdColumn,
@@ -82,7 +84,8 @@ export function generateConversationalHistory(
       const formattedHistory = formatConversationHistory(
         relevantTurns,
         selectedFormatColumns,
-        turnIndex
+        turnIndex,
+        columnIdToNameMap
       )
 
       results[originalIndex] = formattedHistory
@@ -98,7 +101,8 @@ export function generateConversationalHistory(
 function formatConversationHistory(
   turns: ConversationTurn[],
   formatColumns: string[],
-  currentTurnIndex: number
+  currentTurnIndex: number,
+  columnIdToNameMap?: Map<string, string>
 ): string {
   const lines: string[] = []
 
@@ -108,10 +112,14 @@ function formatConversationHistory(
     lines.push(`[Turn ${idx + 1}]${isCurrent ? ' ← CURRENT' : ''}`)
 
     // Add formatted columns
-    formatColumns.forEach(col => {
-      const value = turn[col]
+    formatColumns.forEach(columnId => {
+      const value = turn[columnId]
       const displayValue = value != null ? String(value) : ''
-      lines.push(`${col}: ${displayValue}`)
+
+      // Use display name if mapping is provided, otherwise use column ID
+      const displayName = columnIdToNameMap?.get(columnId) || columnId
+
+      lines.push(`${displayName}: ${displayValue}`)
     })
 
     // Add separator between turns

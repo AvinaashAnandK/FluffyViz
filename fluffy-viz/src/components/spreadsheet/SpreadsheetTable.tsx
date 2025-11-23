@@ -1,10 +1,13 @@
 'use client'
 
 import { useState } from 'react'
-import { Plus, Loader2, ArrowUpDown, ArrowUp, ArrowDown, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Plus, Loader2, ArrowUpDown, ArrowUp, ArrowDown, ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react'
 import type { Column, SpreadsheetData } from './SpreadsheetEditor'
 import { getTemplateGroups } from '@/config/ai-column-templates'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { AiCell } from './AiCell'
+import type { CellMetadata } from '@/lib/duckdb'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -39,6 +42,15 @@ interface SpreadsheetTableProps {
   // Filter props
   columnFilters?: Record<string, string>
   onFilterChange?: (column: string, value: string) => void
+  // Retry props
+  columnStats?: Record<string, {
+    failed: number
+    edited: number
+    pending: number
+    succeeded: number
+    total: number
+  }>
+  onOpenRetryModal?: (column: Column) => void
 }
 
 // Get template groups with hierarchy
@@ -69,7 +81,9 @@ export function SpreadsheetTable({
   sortDirection = null,
   onSort,
   columnFilters = {},
-  onFilterChange
+  onFilterChange,
+  columnStats = {},
+  onOpenRetryModal
 }: SpreadsheetTableProps) {
   const [editingCell, setEditingCell] = useState<{row: number, col: string} | null>(null)
   const [editValue, setEditValue] = useState('')
@@ -99,9 +113,18 @@ export function SpreadsheetTable({
     return <ArrowUpDown className="w-3 h-3 opacity-50" />
   }
 
+  const [originalEditValue, setOriginalEditValue] = useState('')
+
   const handleCellClick = (rowIndex: number, columnId: string, currentValue: any) => {
+    // Save the current cell before switching to a new one
+    if (editingCell) {
+      handleCellBlur()
+    }
+
+    const stringValue = String(currentValue || '')
     setEditingCell({ row: rowIndex, col: columnId })
-    setEditValue(String(currentValue || ''))
+    setEditValue(stringValue)
+    setOriginalEditValue(stringValue)
     setSelectedCell({ row: rowIndex, col: columnId })
   }
 
@@ -160,7 +183,10 @@ export function SpreadsheetTable({
 
   const handleCellBlur = () => {
     if (editingCell) {
-      onCellChange(editingCell.row, editingCell.col, editValue)
+      // Only trigger change if value actually changed
+      if (editValue !== originalEditValue) {
+        onCellChange(editingCell.row, editingCell.col, editValue)
+      }
       setEditingCell(null)
     }
   }
@@ -229,49 +255,128 @@ export function SpreadsheetTable({
             <th className="w-16 border border-border bg-muted/50">
               {/* Empty cell for row numbers */}
             </th>
-            {visibleColumns.map((column) => (
-              <th key={`name-${column.id}`} className="border border-border bg-muted text-left">
-                {column.isAIGenerated && column.metadata?.prompt ? (
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <button
-                          className="w-full p-3 text-left hover:bg-accent hover:text-accent-foreground transition-colors"
-                          onClick={() => handleSort(column.id)}
-                        >
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="flex flex-col flex-1">
-                              <span className="font-medium text-foreground">{column.name}</span>
-                              <span className="text-xs text-muted-foreground">{column.type}</span>
+            {visibleColumns.map((column) => {
+              const stats = columnStats[column.id]
+              const isAIColumn = column.columnType === 'ai-generated'
+
+              return (
+                <th key={`name-${column.id}`} className="border border-border bg-muted text-left">
+                  {column.isAIGenerated && column.metadata?.prompt ? (
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <div
+                            className="w-full p-3 text-left hover:bg-accent hover:text-accent-foreground transition-colors cursor-pointer"
+                            onClick={() => handleSort(column.id)}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex flex-col flex-1">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-medium text-foreground">{column.name}</span>
+                                  {isAIColumn && stats && (
+                                    <div className="flex gap-1">
+                                      {stats.failed > 0 && (
+                                        <Badge variant="destructive" className="h-5 text-[10px] px-1">
+                                          {stats.failed} failed
+                                        </Badge>
+                                      )}
+                                      {stats.edited > 0 && (
+                                        <Badge variant="secondary" className="h-5 text-[10px] px-1">
+                                          {stats.edited} edited
+                                        </Badge>
+                                      )}
+                                      {stats.pending > 0 && (
+                                        <Badge variant="outline" className="h-5 text-[10px] px-1">
+                                          {stats.pending} pending
+                                        </Badge>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                                <span className="text-xs text-muted-foreground">{column.type}</span>
+                              </div>
+                              <div className="flex items-center gap-1">
+                                {isAIColumn && onOpenRetryModal && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      onOpenRetryModal(column)
+                                    }}
+                                    className="h-6 w-6 p-0"
+                                    title="Regenerate column"
+                                  >
+                                    <RefreshCw className="h-3 w-3" />
+                                  </Button>
+                                )}
+                                {getSortIcon(column.id)}
+                              </div>
                             </div>
-                            {getSortIcon(column.id)}
                           </div>
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent side="bottom" className="max-w-md">
-                        <div className="space-y-1">
-                          <p className="font-semibold text-xs">Prompt:</p>
-                          <p className="text-xs whitespace-pre-wrap">{column.metadata.prompt}</p>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom" className="max-w-md">
+                          <div className="space-y-1">
+                            <p className="font-semibold text-xs">Prompt:</p>
+                            <p className="text-xs whitespace-pre-wrap">{column.metadata.prompt}</p>
+                          </div>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  ) : (
+                    <button
+                      className="w-full p-3 text-left hover:bg-accent hover:text-accent-foreground transition-colors"
+                      onClick={() => handleSort(column.id)}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex flex-col flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-foreground">{column.name}</span>
+                            {isAIColumn && stats && (
+                              <div className="flex gap-1">
+                                {stats.failed > 0 && (
+                                  <Badge variant="destructive" className="h-5 text-[10px] px-1">
+                                    {stats.failed} failed
+                                  </Badge>
+                                )}
+                                {stats.edited > 0 && (
+                                  <Badge variant="secondary" className="h-5 text-[10px] px-1">
+                                    {stats.edited} edited
+                                  </Badge>
+                                )}
+                                {stats.pending > 0 && (
+                                  <Badge variant="outline" className="h-5 text-[10px] px-1">
+                                    {stats.pending} pending
+                                  </Badge>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                          <span className="text-xs text-muted-foreground">{column.type}</span>
                         </div>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                ) : (
-                  <button
-                    className="w-full p-3 text-left hover:bg-accent hover:text-accent-foreground transition-colors"
-                    onClick={() => handleSort(column.id)}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex flex-col flex-1">
-                        <span className="font-medium text-foreground">{column.name}</span>
-                        <span className="text-xs text-muted-foreground">{column.type}</span>
+                        <div className="flex items-center gap-1">
+                          {isAIColumn && onOpenRetryModal && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                onOpenRetryModal(column)
+                              }}
+                              className="h-6 w-6 p-0"
+                              title="Regenerate column"
+                            >
+                              <RefreshCw className="h-3 w-3" />
+                            </Button>
+                          )}
+                          {getSortIcon(column.id)}
+                        </div>
                       </div>
-                      {getSortIcon(column.id)}
-                    </div>
-                  </button>
-                )}
-              </th>
-            ))}
+                    </button>
+                  )}
+                </th>
+              )
+            })}
             <th className="border border-border bg-muted"></th>
           </tr>
         </thead>
@@ -321,6 +426,17 @@ export function SpreadsheetTable({
                           className="w-full h-full resize-none border-none outline-none bg-transparent"
                           autoFocus
                         />
+                      ) : column.columnType === 'ai-generated' ? (
+                        <div
+                          onClick={() => handleCellClick(rowIndex, column.id, row[column.id])}
+                          onMouseDown={() => handleCellSelect(rowIndex, column.id)}
+                          className="cursor-pointer w-full h-full min-h-[80px]"
+                        >
+                          <AiCell
+                            value={String(row[column.id] || '')}
+                            metadata={row[`${column.id}__meta`] as CellMetadata | undefined}
+                          />
+                        </div>
                       ) : (
                         <div
                           onClick={() => handleCellClick(rowIndex, column.id, row[column.id])}

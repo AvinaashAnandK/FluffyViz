@@ -20,7 +20,11 @@ export async function GET(
       )
     }
 
-    const yamlPath = path.join(process.cwd(), 'src', template.promptFile)
+    // Remove leading slash from promptFile if present
+    const promptFilePath = template.promptFile.startsWith('/')
+      ? template.promptFile.substring(1)
+      : template.promptFile
+    const yamlPath = path.join(process.cwd(), 'src', promptFilePath)
     const fileContents = fs.readFileSync(yamlPath, 'utf8')
     const config = yaml.load(fileContents) as PromptConfig
 

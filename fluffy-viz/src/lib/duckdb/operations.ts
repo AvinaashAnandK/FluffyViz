@@ -5,7 +5,7 @@
  */
 
 import { getConnection, executeQuery } from './client';
-import type { QueryOptions, RowData, ColumnInfo, CountResult } from './types';
+import type { QueryOptions, RowData, ColumnInfo, CountResult, ColumnMetadata, CellMetadata } from './types';
 
 /**
  * Create a dynamic file_data table for parsed file content
@@ -144,6 +144,65 @@ export async function queryFileData(
 }
 
 /**
+ * Query file data enriched with cell metadata for AI columns
+ * Returns rows with metadata attached as `{columnId}__meta` properties
+ */
+export async function queryFileDataWithMetadata(
+  fileId: string,
+  options: QueryOptions = {}
+): Promise<RowData[]> {
+  // First get the raw data
+  const rows = await queryFileData(fileId, options);
+
+  if (rows.length === 0) return rows;
+
+  // Get all cell metadata for this file
+  const allCellMetadata = await getAllCellMetadata(fileId);
+
+  // Build a map for fast lookups: `${columnId}:${rowIndex}` -> metadata
+  const metadataMap = new Map<string, CellMetadata>();
+  for (const meta of allCellMetadata) {
+    const key = `${meta.columnId}:${meta.rowIndex}`;
+    metadataMap.set(key, meta);
+  }
+
+  // Get AI column metadata to know which columns need metadata
+  const columnMetadata = await getAllColumnMetadata(fileId);
+  const aiColumns = new Set(
+    columnMetadata
+      .filter(col => col.columnType === 'ai-generated')
+      .map(col => col.columnId)
+  );
+
+  // Enrich rows with metadata
+  const enrichedRows = rows.map(row => {
+    const enriched: RowData = { ...row };
+
+    // For each AI column, attach metadata if it exists
+    for (const columnId of aiColumns) {
+      const rowIndex = row.row_index as number;
+      const key = `${columnId}:${rowIndex}`;
+      const meta = metadataMap.get(key);
+
+      if (meta) {
+        enriched[`${columnId}__meta`] = {
+          status: meta.status,
+          error: meta.error,
+          errorType: meta.errorType,
+          edited: meta.edited,
+          originalValue: meta.originalValue,
+          lastEditTime: meta.lastEditTime,
+        };
+      }
+    }
+
+    return enriched;
+  });
+
+  return enrichedRows;
+}
+
+/**
  * Get total row count for a file
  */
 export async function getFileRowCount(fileId: string): Promise<number> {
@@ -184,10 +243,20 @@ export async function addColumn(
   const tableName = `file_data_${fileId}`;
   const sanitizedColumn = sanitizeColumnName(columnName);
 
+  // DuckDB doesn't allow parameterized DEFAULT values in ALTER TABLE
+  // So we add the column without DEFAULT, then UPDATE all rows
   await executeQuery(
-    `ALTER TABLE "${tableName}" ADD COLUMN "${sanitizedColumn}" ${columnType} DEFAULT ?`,
-    [defaultValue]
+    `ALTER TABLE "${tableName}" ADD COLUMN "${sanitizedColumn}" ${columnType}`,
+    []
   );
+
+  // If a default value is provided, update all existing rows
+  if (defaultValue !== null && defaultValue !== undefined) {
+    await executeQuery(
+      `UPDATE "${tableName}" SET "${sanitizedColumn}" = ?`,
+      [defaultValue]
+    );
+  }
 
   console.log(`[DuckDB Operations] Added column "${sanitizedColumn}" to ${tableName}`);
 }
@@ -270,6 +339,314 @@ export async function tableExists(fileId: string): Promise<boolean> {
   `, [tableName]);
 
   return result[0]?.exists || false;
+}
+
+// ============================================================================
+// Column Metadata Operations
+// ============================================================================
+
+/**
+ * Save column metadata for an AI-generated or computed column
+ */
+export async function saveColumnMetadata(metadata: ColumnMetadata): Promise<void> {
+  await executeQuery(
+    `INSERT OR REPLACE INTO column_metadata
+     (file_id, column_id, column_name, column_type, model, provider, prompt, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      metadata.fileId,
+      metadata.columnId,
+      metadata.columnName || null,
+      metadata.columnType,
+      metadata.model || null,
+      metadata.provider || null,
+      metadata.prompt || null,
+      metadata.createdAt || Date.now()
+    ]
+  );
+
+  console.log(`[DuckDB Operations] Saved metadata for column ${metadata.columnId}`);
+}
+
+/**
+ * Get column metadata for a specific column
+ */
+export async function getColumnMetadata(
+  fileId: string,
+  columnId: string
+): Promise<ColumnMetadata | null> {
+  const result = await executeQuery<{
+    file_id: string;
+    column_id: string;
+    column_name: string | null;
+    column_type: string;
+    model: string | null;
+    provider: string | null;
+    prompt: string | null;
+    created_at: number | null;
+  }>(
+    `SELECT * FROM column_metadata WHERE file_id = ? AND column_id = ?`,
+    [fileId, columnId]
+  );
+
+  if (result.length === 0) return null;
+
+  const row = result[0];
+  return {
+    fileId: row.file_id,
+    columnId: row.column_id,
+    columnName: row.column_name || undefined,
+    columnType: row.column_type as 'data' | 'ai-generated' | 'computed',
+    model: row.model || undefined,
+    provider: row.provider || undefined,
+    prompt: row.prompt || undefined,
+    createdAt: row.created_at || undefined,
+  };
+}
+
+/**
+ * Get all column metadata for a file
+ */
+export async function getAllColumnMetadata(fileId: string): Promise<ColumnMetadata[]> {
+  const result = await executeQuery<{
+    file_id: string;
+    column_id: string;
+    column_name: string | null;
+    column_type: string;
+    model: string | null;
+    provider: string | null;
+    prompt: string | null;
+    created_at: number | null;
+  }>(
+    `SELECT * FROM column_metadata WHERE file_id = ? ORDER BY created_at`,
+    [fileId]
+  );
+
+  return result.map(row => ({
+    fileId: row.file_id,
+    columnId: row.column_id,
+    columnName: row.column_name || undefined,
+    columnType: row.column_type as 'data' | 'ai-generated' | 'computed',
+    model: row.model || undefined,
+    provider: row.provider || undefined,
+    prompt: row.prompt || undefined,
+    createdAt: row.created_at || undefined,
+  }));
+}
+
+/**
+ * Delete column metadata
+ */
+export async function deleteColumnMetadata(
+  fileId: string,
+  columnId: string
+): Promise<void> {
+  await executeQuery(
+    `DELETE FROM column_metadata WHERE file_id = ? AND column_id = ?`,
+    [fileId, columnId]
+  );
+
+  console.log(`[DuckDB Operations] Deleted metadata for column ${columnId}`);
+}
+
+// ============================================================================
+// Cell Metadata Operations
+// ============================================================================
+
+/**
+ * Save cell metadata
+ */
+export async function saveCellMetadata(metadata: CellMetadata): Promise<void> {
+  await executeQuery(
+    `INSERT OR REPLACE INTO cell_metadata
+     (file_id, column_id, row_index, status, error, error_type, edited, original_value, last_edit_time)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      metadata.fileId,
+      metadata.columnId,
+      metadata.rowIndex,
+      metadata.status,
+      metadata.error || null,
+      metadata.errorType || null,
+      metadata.edited,
+      metadata.originalValue || null,
+      metadata.lastEditTime || null
+    ]
+  );
+}
+
+/**
+ * Get cell metadata for a specific cell
+ */
+export async function getCellMetadata(
+  fileId: string,
+  columnId: string,
+  rowIndex: number
+): Promise<CellMetadata | null> {
+  const result = await executeQuery<{
+    file_id: string;
+    column_id: string;
+    row_index: number;
+    status: string;
+    error: string | null;
+    error_type: string | null;
+    edited: boolean;
+    original_value: string | null;
+    last_edit_time: number | null;
+  }>(
+    `SELECT * FROM cell_metadata WHERE file_id = ? AND column_id = ? AND row_index = ?`,
+    [fileId, columnId, rowIndex]
+  );
+
+  if (result.length === 0) return null;
+
+  const row = result[0];
+  return {
+    fileId: row.file_id,
+    columnId: row.column_id,
+    rowIndex: row.row_index,
+    status: row.status as 'pending' | 'success' | 'failed',
+    error: row.error || undefined,
+    errorType: row.error_type as 'rate_limit' | 'network' | 'auth' | 'invalid_request' | 'server_error' | undefined,
+    edited: row.edited,
+    originalValue: row.original_value || undefined,
+    lastEditTime: row.last_edit_time || undefined,
+  };
+}
+
+/**
+ * Get all cell metadata for a column
+ */
+export async function getColumnCellMetadata(
+  fileId: string,
+  columnId: string
+): Promise<CellMetadata[]> {
+  const result = await executeQuery<{
+    file_id: string;
+    column_id: string;
+    row_index: number;
+    status: string;
+    error: string | null;
+    error_type: string | null;
+    edited: boolean;
+    original_value: string | null;
+    last_edit_time: number | null;
+  }>(
+    `SELECT * FROM cell_metadata WHERE file_id = ? AND column_id = ? ORDER BY row_index`,
+    [fileId, columnId]
+  );
+
+  return result.map(row => ({
+    fileId: row.file_id,
+    columnId: row.column_id,
+    rowIndex: row.row_index,
+    status: row.status as 'pending' | 'success' | 'failed',
+    error: row.error || undefined,
+    errorType: row.error_type as 'rate_limit' | 'network' | 'auth' | 'invalid_request' | 'server_error' | undefined,
+    edited: row.edited,
+    originalValue: row.original_value || undefined,
+    lastEditTime: row.last_edit_time || undefined,
+  }));
+}
+
+/**
+ * Get all cell metadata for a file
+ */
+export async function getAllCellMetadata(fileId: string): Promise<CellMetadata[]> {
+  const result = await executeQuery<{
+    file_id: string;
+    column_id: string;
+    row_index: number;
+    status: string;
+    error: string | null;
+    error_type: string | null;
+    edited: boolean;
+    original_value: string | null;
+    last_edit_time: number | null;
+  }>(
+    `SELECT * FROM cell_metadata WHERE file_id = ? ORDER BY column_id, row_index`,
+    [fileId]
+  );
+
+  return result.map(row => ({
+    fileId: row.file_id,
+    columnId: row.column_id,
+    rowIndex: row.row_index,
+    status: row.status as 'pending' | 'success' | 'failed',
+    error: row.error || undefined,
+    errorType: row.error_type as 'rate_limit' | 'network' | 'auth' | 'invalid_request' | 'server_error' | undefined,
+    edited: row.edited,
+    originalValue: row.original_value || undefined,
+    lastEditTime: row.last_edit_time || undefined,
+  }));
+}
+
+/**
+ * Batch save cell metadata
+ */
+export async function batchSaveCellMetadata(
+  metadata: CellMetadata[]
+): Promise<void> {
+  if (metadata.length === 0) return;
+
+  const conn = await getConnection();
+
+  try {
+    // Build VALUES clause
+    const values = metadata.map(m =>
+      `(${formatValue(m.fileId)}, ${formatValue(m.columnId)}, ${m.rowIndex}, ${formatValue(m.status)}, ${formatValue(m.error || null)}, ${formatValue(m.errorType || null)}, ${m.edited ? 'TRUE' : 'FALSE'}, ${formatValue(m.originalValue || null)}, ${formatValue(m.lastEditTime || null)})`
+    ).join(',\n');
+
+    await conn.query(`
+      INSERT OR REPLACE INTO cell_metadata
+      (file_id, column_id, row_index, status, error, error_type, edited, original_value, last_edit_time)
+      VALUES ${values}
+    `);
+
+    console.log(`[DuckDB Operations] Batch saved ${metadata.length} cell metadata entries`);
+
+  } finally {
+    await conn.close();
+  }
+}
+
+/**
+ * Delete cell metadata for a specific cell
+ */
+export async function deleteCellMetadata(
+  fileId: string,
+  columnId: string,
+  rowIndex: number
+): Promise<void> {
+  await executeQuery(
+    `DELETE FROM cell_metadata WHERE file_id = ? AND column_id = ? AND row_index = ?`,
+    [fileId, columnId, rowIndex]
+  );
+}
+
+/**
+ * Delete all cell metadata for a column
+ */
+export async function deleteColumnCellMetadata(
+  fileId: string,
+  columnId: string
+): Promise<void> {
+  await executeQuery(
+    `DELETE FROM cell_metadata WHERE file_id = ? AND column_id = ?`,
+    [fileId, columnId]
+  );
+
+  console.log(`[DuckDB Operations] Deleted all cell metadata for column ${columnId}`);
+}
+
+/**
+ * Delete all cell and column metadata for a file
+ */
+export async function deleteFileMetadata(fileId: string): Promise<void> {
+  await executeQuery(`DELETE FROM cell_metadata WHERE file_id = ?`, [fileId]);
+  await executeQuery(`DELETE FROM column_metadata WHERE file_id = ?`, [fileId]);
+
+  console.log(`[DuckDB Operations] Deleted all metadata for file ${fileId}`);
 }
 
 // ============================================================================

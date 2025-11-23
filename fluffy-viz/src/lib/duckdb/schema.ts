@@ -64,6 +64,81 @@ export async function initializeSchema(): Promise<void> {
     `);
     console.log('[DuckDB Schema] ✓ Embedding points table created');
 
+    // Create column_metadata table for AI column configuration
+    await executeQuery(`
+      CREATE TABLE IF NOT EXISTS column_metadata (
+        file_id TEXT NOT NULL,
+        column_id TEXT NOT NULL,
+        column_name TEXT,
+        column_type TEXT NOT NULL,
+        model TEXT,
+        provider TEXT,
+        prompt TEXT,
+        created_at BIGINT,
+        PRIMARY KEY (file_id, column_id)
+      )
+    `);
+    console.log('[DuckDB Schema] ✓ Column metadata table created');
+
+    // Migration: Add column_name if it doesn't exist (for existing databases)
+    try {
+      // Check if column_name exists
+      const columns = await executeQuery<{ column_name: string }>(`
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = 'column_metadata'
+          AND column_name = 'column_name'
+      `);
+
+      if (columns.length === 0) {
+        // Column doesn't exist, add it
+        await executeQuery(`ALTER TABLE column_metadata ADD COLUMN column_name TEXT`);
+        console.log('[DuckDB Schema] ✓ Column name migration completed');
+      } else {
+        console.log('[DuckDB Schema] Column name already exists, migration skipped');
+      }
+    } catch (error: any) {
+      console.error('[DuckDB Schema] Column name migration error:', error);
+      // Try to recreate the table with the correct schema
+      try {
+        console.log('[DuckDB Schema] Attempting to recreate column_metadata table...');
+        await executeQuery('DROP TABLE IF EXISTS column_metadata');
+        await executeQuery(`
+          CREATE TABLE column_metadata (
+            file_id TEXT NOT NULL,
+            column_id TEXT NOT NULL,
+            column_name TEXT,
+            column_type TEXT NOT NULL,
+            model TEXT,
+            provider TEXT,
+            prompt TEXT,
+            created_at BIGINT,
+            PRIMARY KEY (file_id, column_id)
+          )
+        `);
+        console.log('[DuckDB Schema] ✓ Column metadata table recreated');
+      } catch (recreateError) {
+        console.error('[DuckDB Schema] Failed to recreate table:', recreateError);
+      }
+    }
+
+    // Create cell_metadata table for AI cell status tracking
+    await executeQuery(`
+      CREATE TABLE IF NOT EXISTS cell_metadata (
+        file_id TEXT NOT NULL,
+        column_id TEXT NOT NULL,
+        row_index INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        error TEXT,
+        error_type TEXT,
+        edited BOOLEAN DEFAULT FALSE,
+        original_value TEXT,
+        last_edit_time BIGINT,
+        PRIMARY KEY (file_id, column_id, row_index)
+      )
+    `);
+    console.log('[DuckDB Schema] ✓ Cell metadata table created');
+
     // Create view for embedding visualization with x, y columns
     // This view extracts array elements for embedding-atlas compatibility
     await executeQuery(`
@@ -126,6 +201,23 @@ async function createIndexes(): Promise<void> {
       ON embedding_points(layer_id)
     `);
 
+    // Index on column_metadata table
+    await executeQuery(`
+      CREATE INDEX IF NOT EXISTS idx_column_metadata_file
+      ON column_metadata(file_id)
+    `);
+
+    // Index on cell_metadata table
+    await executeQuery(`
+      CREATE INDEX IF NOT EXISTS idx_cell_metadata_file_column
+      ON cell_metadata(file_id, column_id)
+    `);
+
+    await executeQuery(`
+      CREATE INDEX IF NOT EXISTS idx_cell_metadata_status
+      ON cell_metadata(file_id, column_id, status)
+    `);
+
     console.log('[DuckDB Schema] ✓ Indexes created');
   } catch (error) {
     console.warn('[DuckDB Schema] Failed to create some indexes:', error);
@@ -142,10 +234,10 @@ export async function isSchemaInitialized(): Promise<boolean> {
       SELECT table_name
       FROM information_schema.tables
       WHERE table_schema = 'main'
-        AND table_name IN ('files', 'embedding_layers', 'embedding_points')
+        AND table_name IN ('files', 'embedding_layers', 'embedding_points', 'column_metadata', 'cell_metadata')
     `);
 
-    return result.length === 3;
+    return result.length === 5;
   } catch {
     return false;
   }
@@ -166,6 +258,8 @@ export async function dropAllTables(): Promise<void> {
 
   try {
     // Drop in reverse order of dependencies
+    await executeQuery('DROP TABLE IF EXISTS cell_metadata CASCADE');
+    await executeQuery('DROP TABLE IF EXISTS column_metadata CASCADE');
     await executeQuery('DROP TABLE IF EXISTS embedding_points CASCADE');
     await executeQuery('DROP TABLE IF EXISTS embedding_layers CASCADE');
 

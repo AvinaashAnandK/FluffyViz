@@ -3,7 +3,7 @@
  */
 
 // Client
-export { getDuckDB, getConnection, executeQuery, resetDatabase, persistDatabase } from './client';
+export { getDuckDB, getConnection, executeQuery, resetDatabase, persistDatabase, completelyResetDatabase } from './client';
 
 // Schema
 export { initializeSchema, isSchemaInitialized, getSchemaVersion, dropAllTables } from './schema';
@@ -12,6 +12,7 @@ export { initializeSchema, isSchemaInitialized, getSchemaVersion, dropAllTables 
 export {
   createFileTable,
   queryFileData,
+  queryFileDataWithMetadata,
   getFileRowCount,
   updateCellValue,
   addColumn,
@@ -19,6 +20,18 @@ export {
   deleteFileTable,
   getTableColumns,
   tableExists,
+  saveColumnMetadata,
+  getColumnMetadata,
+  getAllColumnMetadata,
+  deleteColumnMetadata,
+  saveCellMetadata,
+  getCellMetadata,
+  getColumnCellMetadata,
+  getAllCellMetadata,
+  batchSaveCellMetadata,
+  deleteCellMetadata,
+  deleteColumnCellMetadata,
+  deleteFileMetadata,
 } from './operations';
 
 // File storage
@@ -49,4 +62,9 @@ export type {
   EmbeddingPointData,
   BatchOperationResult,
   FileTableConfig,
+  ColumnType,
+  ColumnMetadata,
+  FailureType,
+  CellStatus,
+  CellMetadata,
 } from './types';

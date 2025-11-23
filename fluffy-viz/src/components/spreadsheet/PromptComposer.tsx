@@ -378,6 +378,7 @@ export function PromptComposer({
     ? serializePrompt(docJSON, mappings)
     : {
         prompt: '',
+        previewPrompt: '',
         unmappedVariables: [],
         isValid: true,
         mappedVariableCount: 0,
@@ -422,11 +423,11 @@ export function PromptComposer({
       <Accordion type="single" collapsible>
         <AccordionItem value="preview">
           <AccordionTrigger className="text-sm">
-            Preview Interpolated Prompt
+            Preview Prompt
           </AccordionTrigger>
           <AccordionContent>
             <pre className="text-xs bg-gray-100 dark:bg-gray-800 p-3 rounded-md overflow-x-auto whitespace-pre-wrap">
-              {validationResult.prompt}
+              {validationResult.previewPrompt}
             </pre>
           </AccordionContent>
         </AccordionItem>

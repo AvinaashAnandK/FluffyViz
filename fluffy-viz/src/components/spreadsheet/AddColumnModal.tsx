@@ -12,6 +12,11 @@ import { loadPromptConfig } from '@/config/ai-column-templates'
 import { ColumnMeta } from '@/lib/prompt-serializer'
 import { loadProviderSettings, getEnabledProviders, type ProviderSettings } from '@/config/provider-settings'
 
+interface ColumnInfo {
+  id: string
+  name: string
+}
+
 interface AddColumnModalProps {
   isOpen: boolean
   onClose: () => void
@@ -22,8 +27,9 @@ interface AddColumnModalProps {
     provider: ModelProvider
   }) => void
   template: string | null
-  availableColumns: string[]
+  availableColumns: ColumnInfo[]
   dataRows: any[]
+  existingColumnNames?: string[]
 }
 
 export function AddColumnModal({
@@ -32,7 +38,8 @@ export function AddColumnModal({
   onAddColumn,
   template,
   availableColumns,
-  dataRows
+  dataRows,
+  existingColumnNames = []
 }: AddColumnModalProps) {
   const [columnName, setColumnName] = useState('')
   const [prompt, setPrompt] = useState('')
@@ -46,6 +53,10 @@ export function AddColumnModal({
 
   // Check if current template is conversational history
   const isConversationalHistory = template === 'conversational_history'
+
+  // Check for duplicate column name
+  const isDuplicateName = columnName.trim() !== '' &&
+    existingColumnNames.some(name => name.toLowerCase() === columnName.trim().toLowerCase())
 
   // Load provider configuration on mount
   useEffect(() => {
@@ -71,14 +82,15 @@ export function AddColumnModal({
         .replace(/[_-]+/g, ' ')
         .replace(/\b\w/g, (char) => char.toUpperCase())
 
-    return availableColumns.map((columnSlug) => {
-      const exampleValue = firstRow?.[columnSlug]
+    return availableColumns.map((column) => {
+      // Use column.id to look up data, but column.name for display
+      const exampleValue = firstRow?.[column.id]
 
       return {
-        id: columnSlug,
-        slug: columnSlug,
-        displayName: columnSlug,
-        label: toTitleCase(columnSlug),
+        id: column.id,
+        slug: column.id,
+        displayName: column.name,
+        label: toTitleCase(column.name),
         preview: exampleValue == null ? '' : String(exampleValue),
       }
     })
@@ -86,12 +98,18 @@ export function AddColumnModal({
 
   useEffect(() => {
     if (template) {
-      loadPromptConfig(template).then(config => {
-        setTemplateConfig(config)
+      // Conversational history doesn't use a prompt template - it's client-side only
+      if (template === 'conversational_history') {
+        setTemplateConfig(null)
         setColumnName(`${template}_column`)
-      }).catch(err => {
-        console.error('Error loading template config:', err)
-      })
+      } else {
+        loadPromptConfig(template).then(config => {
+          setTemplateConfig(config)
+          setColumnName(`${template}_column`)
+        }).catch(err => {
+          console.error('Error loading template config:', err)
+        })
+      }
     } else {
       setTemplateConfig(null)
     }
@@ -126,7 +144,7 @@ export function AddColumnModal({
         name: columnName.trim(),
         prompt: convPrompt, // Store config as JSON in prompt
         model: selectedModel || { id: 'none', name: 'N/A', provider: 'none' } as Model,
-        provider: selectedProvider || { id: 'none', displayName: 'N/A', models: [] } as ModelProvider
+        provider: selectedProvider || { id: 'none', name: 'none', displayName: 'N/A', models: [] } as ModelProvider
       })
     } else {
       // Regular column validation
@@ -214,10 +232,19 @@ export function AddColumnModal({
                 id="columnName"
                 value={columnName}
                 onChange={(e) => setColumnName(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
+                className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 ${
+                  isDuplicateName
+                    ? 'border-red-500 dark:border-red-500 focus:ring-red-500'
+                    : 'border-gray-300 dark:border-gray-700 focus:ring-blue-500'
+                }`}
                 placeholder="Enter column name..."
                 required
               />
+              {isDuplicateName && (
+                <p className="mt-1 text-sm text-red-600 dark:text-red-400">
+                  A column with this name already exists. Please choose a different name.
+                </p>
+              )}
             </div>
 
             {/* Conditional content based on template type */}
@@ -276,9 +303,10 @@ export function AddColumnModal({
             type="submit"
             onClick={handleSubmit}
             disabled={
-              isConversationalHistory
+              isDuplicateName ||
+              (isConversationalHistory
                 ? !columnName.trim() || !convHistoryConfig
-                : !selectedModel || !selectedProvider || !columnName.trim() || !prompt.trim() || !promptValid
+                : !selectedModel || !selectedProvider || !columnName.trim() || !prompt.trim() || !promptValid)
             }
             className="w-full px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed rounded-md transition-colors"
           >

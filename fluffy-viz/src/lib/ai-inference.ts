@@ -8,6 +8,7 @@ import { createGroq } from '@ai-sdk/groq'
 import { HfInference } from '@huggingface/inference'
 import type { ProviderKey } from '@/config/provider-settings'
 import { Model, ModelProvider } from '@/types/models'
+import type { FailureType } from '@/lib/duckdb'
 
 export interface InferenceOptions {
   model: Model
@@ -20,6 +21,91 @@ export interface InferenceOptions {
 export interface InferenceResult {
   content: string
   error?: string
+  errorType?: FailureType
+}
+
+/**
+ * Classify error type for better UI feedback
+ * Uses dual detection: HTTP status code + fuzzy string matching
+ */
+export function classifyError(error: any): FailureType {
+  // Check HTTP status code first (most reliable)
+  const status = error?.status || error?.response?.status
+
+  if (status === 429) {
+    return 'rate_limit'
+  }
+
+  if (status === 401 || status === 403) {
+    return 'auth'
+  }
+
+  if (status >= 500) {
+    return 'server_error'
+  }
+
+  // Fuzzy string matching on error message
+  const message = (error?.message || error?.error || String(error)).toLowerCase()
+
+  // Rate limit keywords
+  const rateLimitKeywords = [
+    'rate limit',
+    'too many requests',
+    'quota exceeded',
+    'requests per minute',
+    'rpm exceeded',
+    'rate_limit_exceeded',
+    'quota_exceeded'
+  ]
+
+  if (rateLimitKeywords.some(keyword => message.includes(keyword))) {
+    return 'rate_limit'
+  }
+
+  // Auth keywords
+  const authKeywords = [
+    'unauthorized',
+    'authentication',
+    'invalid api key',
+    'api key',
+    'forbidden',
+    'access denied'
+  ]
+
+  if (authKeywords.some(keyword => message.includes(keyword))) {
+    return 'auth'
+  }
+
+  // Network keywords
+  const networkKeywords = [
+    'network',
+    'connection',
+    'timeout',
+    'econnrefused',
+    'fetch failed',
+    'offline'
+  ]
+
+  if (!navigator.onLine || networkKeywords.some(keyword => message.includes(keyword))) {
+    return 'network'
+  }
+
+  // Server error keywords
+  const serverKeywords = [
+    'internal server error',
+    'service unavailable',
+    '500',
+    '502',
+    '503',
+    '504'
+  ]
+
+  if (serverKeywords.some(keyword => message.includes(keyword))) {
+    return 'server_error'
+  }
+
+  // Default to invalid_request for everything else
+  return 'invalid_request'
 }
 
 /**
@@ -129,9 +215,12 @@ async function generateHuggingFaceCompletion(
       }
     }
   } catch (error) {
-    throw new Error(
-      `HuggingFace inference failed: ${error instanceof Error ? error.message : 'Unknown error'}`
-    )
+    const errorType = classifyError(error)
+    return {
+      content: '',
+      error: error instanceof Error ? error.message : 'Unknown error',
+      errorType,
+    }
   }
 }
 
@@ -178,9 +267,11 @@ export async function generateCompletion(
     return { content: text }
   } catch (error) {
     console.error('AI inference error:', error)
+    const errorType = classifyError(error)
     return {
       content: '',
       error: error instanceof Error ? error.message : 'Unknown error',
+      errorType,
     }
   }
 }
@@ -287,7 +378,11 @@ export async function generateColumnData(
     const results = new Map<number, InferenceResult>()
     apiResults.forEach((result: InferenceResult & { rowIndex: number }) => {
       const rowIndex = result.rowIndex
-      const cellResult = { content: result.content, error: result.error }
+      const cellResult = {
+        content: result.content,
+        error: result.error,
+        errorType: result.errorType
+      }
 
       results.set(rowIndex, cellResult)
 
@@ -305,6 +400,7 @@ export async function generateColumnData(
     return results
   } catch (error) {
     console.error('Error generating column data:', error)
+    const errorType = classifyError(error)
 
     // Return error result for all rows
     const errorResults = new Map<number, InferenceResult>()
@@ -312,6 +408,7 @@ export async function generateColumnData(
       errorResults.set(index, {
         content: '',
         error: error instanceof Error ? error.message : 'Unknown error',
+        errorType,
       })
     })
 

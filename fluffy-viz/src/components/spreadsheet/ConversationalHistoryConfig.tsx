@@ -25,8 +25,13 @@ export interface ConversationalHistoryConfigData {
   selectedFormatColumns: string[]
 }
 
+interface ColumnInfo {
+  id: string
+  name: string
+}
+
 interface ConversationalHistoryConfigProps {
-  availableColumns: string[]
+  availableColumns: ColumnInfo[]
   dataRows: any[]
   onConfigChange: (config: ConversationalHistoryConfigData | null) => void
 }
@@ -46,28 +51,33 @@ export function ConversationalHistoryConfig({
   // Auto-detect potential conversation/sequence columns
   useEffect(() => {
     const potentialConvId = availableColumns.find(col =>
-      col.toLowerCase().includes('session') ||
-      col.toLowerCase().includes('conversation') ||
-      col.toLowerCase().includes('conv_id')
+      col.id.toLowerCase().includes('session') ||
+      col.id.toLowerCase().includes('conversation') ||
+      col.id.toLowerCase().includes('conv_id')
     )
     const potentialSeqId = availableColumns.find(col =>
-      col.toLowerCase().includes('timestamp') ||
-      col.toLowerCase().includes('turn') ||
-      col.toLowerCase().includes('index') ||
-      col.toLowerCase().includes('order')
+      col.id.toLowerCase().includes('timestamp') ||
+      col.id.toLowerCase().includes('turn') ||
+      col.id.toLowerCase().includes('index') ||
+      col.id.toLowerCase().includes('order')
     )
 
-    if (potentialConvId) setConversationIdColumn(potentialConvId)
-    if (potentialSeqId) setSequenceIdColumn(potentialSeqId)
+    if (potentialConvId) setConversationIdColumn(potentialConvId.id)
+    if (potentialSeqId) setSequenceIdColumn(potentialSeqId.id)
   }, [availableColumns])
 
   // Available columns for turn format (excluding identifiers)
   const formatColumnOptions = useMemo(() => {
     return availableColumns.filter(col =>
-      col !== conversationIdColumn &&
-      col !== sequenceIdColumn
+      col.id !== conversationIdColumn &&
+      col.id !== sequenceIdColumn
     )
   }, [availableColumns, conversationIdColumn, sequenceIdColumn])
+
+  // Helper to get column name from ID
+  const getColumnName = (columnId: string) => {
+    return availableColumns.find(col => col.id === columnId)?.name || columnId
+  }
 
   // Generate preview data
   const previewData = useMemo(() => {
@@ -194,7 +204,7 @@ export function ConversationalHistoryConfig({
           </SelectTrigger>
           <SelectContent>
             {availableColumns.map(col => (
-              <SelectItem key={col} value={col}>{col}</SelectItem>
+              <SelectItem key={col.id} value={col.id}>{col.name}</SelectItem>
             ))}
           </SelectContent>
         </Select>
@@ -214,7 +224,7 @@ export function ConversationalHistoryConfig({
           </SelectTrigger>
           <SelectContent>
             {availableColumns.map(col => (
-              <SelectItem key={col} value={col}>{col}</SelectItem>
+              <SelectItem key={col.id} value={col.id}>{col.name}</SelectItem>
             ))}
           </SelectContent>
         </Select>
@@ -292,11 +302,11 @@ export function ConversationalHistoryConfig({
         {/* Selected columns */}
         {selectedFormatColumns.length > 0 && (
           <div className="flex flex-wrap gap-2 mb-2">
-            {selectedFormatColumns.map(col => (
-              <Badge key={col} variant="secondary" className="gap-1">
-                {col}
+            {selectedFormatColumns.map(colId => (
+              <Badge key={colId} variant="secondary" className="gap-1">
+                {getColumnName(colId)}
                 <button
-                  onClick={() => removeFormatColumn(col)}
+                  onClick={() => removeFormatColumn(colId)}
                   className="ml-1 hover:bg-muted rounded-sm"
                 >
                   <X className="w-3 h-3" />
@@ -313,12 +323,12 @@ export function ConversationalHistoryConfig({
           </SelectTrigger>
           <SelectContent>
             {formatColumnOptions
-              .filter(col => !selectedFormatColumns.includes(col))
+              .filter(col => !selectedFormatColumns.includes(col.id))
               .map(col => (
-                <SelectItem key={col} value={col}>
+                <SelectItem key={col.id} value={col.id}>
                   <div className="flex items-center gap-2">
                     <Plus className="w-3 h-3" />
-                    {col}
+                    {col.name}
                   </div>
                 </SelectItem>
               ))}
@@ -351,9 +361,9 @@ export function ConversationalHistoryConfig({
                     <div className="text-blue-600 dark:text-blue-400 font-semibold">
                       [Turn {idx + 1}]{idx === previewData.turns.length - 1 && ' ← CURRENT'}
                     </div>
-                    {selectedFormatColumns.map(col => (
-                      <div key={col}>
-                        <span className="text-green-600 dark:text-green-400">{col}:</span> {String(turn[col] || '')}
+                    {selectedFormatColumns.map(colId => (
+                      <div key={colId}>
+                        <span className="text-green-600 dark:text-green-400">{getColumnName(colId)}:</span> {String(turn[colId] || '')}
                       </div>
                     ))}
                     {idx < previewData.turns.length - 1 && <div className="text-gray-400 my-1">---</div>}

@@ -1,11 +1,12 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { Card, CardContent } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { SpreadsheetTable } from './SpreadsheetTable'
 import { AddColumnModal } from './AddColumnModal'
+import { RetryModal, type RetryOptions } from './RetryModal'
 import { AgentTraceViewer } from '@/components/embedding-viewer/agent-trace-viewer'
 import { Model, ModelProvider } from '@/types/models'
 import { useFileStorage } from '@/hooks/use-file-storage'
@@ -19,7 +20,21 @@ import {
   parseConversationalHistoryConfig,
   generateConversationalHistory
 } from '@/lib/conversational-history'
-import { addColumn as addColumnToDuckDB, batchUpdateColumn, updateCellValue as updateCellInDuckDB } from '@/lib/duckdb'
+import {
+  addColumn as addColumnToDuckDB,
+  batchUpdateColumn,
+  updateCellValue as updateCellInDuckDB,
+  queryFileDataWithMetadata,
+  getAllColumnMetadata,
+  saveColumnMetadata,
+  saveCellMetadata,
+  batchSaveCellMetadata,
+  getColumnCellMetadata,
+  persistDatabase,
+  type CellMetadata
+} from '@/lib/duckdb'
+import { selectFewShotExamples, buildFewShotPrompt } from '@/lib/few-shot-sampling'
+import { toast } from 'sonner'
 import Papa from 'papaparse'
 import {
   Select,
@@ -34,6 +49,7 @@ export interface Column {
   name: string
   type: string
   visible: boolean
+  columnType?: 'data' | 'ai-generated' | 'computed'
   model?: Model
   provider?: ModelProvider
   prompt?: string
@@ -94,6 +110,16 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
     value: ''
   })
 
+  // Retry modal state
+  const [isRetryModalOpen, setIsRetryModalOpen] = useState(false)
+  const [selectedRetryColumn, setSelectedRetryColumn] = useState<Column | null>(null)
+  const [retryExamples, setRetryExamples] = useState<Array<{
+    input: Record<string, any>;
+    output: string;
+    rowIndex: number;
+    editedAt: number;
+  }>>([])
+
   // Build WHERE clause from filter rules
   const buildWhereClause = (): string | undefined => {
     if (filters.length === 0) return undefined
@@ -139,7 +165,7 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
           setFileName(storedFile.name)
 
           // Import DuckDB operations
-          const { queryFileData, getFileRowCount, getFileData } = await import('@/lib/duckdb')
+          const { getFileRowCount, getFileData } = await import('@/lib/duckdb')
 
           // Get total row count for pagination
           const count = await getFileRowCount(fileId)
@@ -154,8 +180,8 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
           // Build WHERE clause from filters
           const whereClause = buildWhereClause()
 
-          // Query paginated data
-          const parsedData = await queryFileData(fileId, {
+          // Query paginated data WITH metadata
+          const parsedData = await queryFileDataWithMetadata(fileId, {
             limit: pageSize,
             offset: (currentPage - 1) * pageSize,
             orderBy,
@@ -163,29 +189,55 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
           })
           setData(parsedData)
 
+          // Load column metadata to identify AI columns
+          const columnMeta = await getAllColumnMetadata(fileId)
+          const columnMetaMap = new Map(
+            columnMeta.map(m => [m.columnId, m])
+          )
+
           // Generate columns from first row (or all data if no pagination data yet)
           if (parsedData.length > 0) {
             const generatedColumns = Object.keys(parsedData[0])
-              .filter(key => key !== 'row_index') // Exclude internal row_index column
-              .map((key) => ({
-                id: key,
-                name: key,
-                type: typeof parsedData[0][key] === 'number' ? 'number' : 'string',
-                visible: true
-              }))
+              .filter(key => key !== 'row_index' && !key.endsWith('__meta')) // Exclude internal columns
+              .map((key) => {
+                const meta = columnMetaMap.get(key)
+                return {
+                  id: key,
+                  name: meta?.columnName || key,  // Use stored name or fallback to ID
+                  type: typeof parsedData[0][key] === 'number' ? 'number' : 'string',
+                  visible: true,
+                  columnType: meta?.columnType,
+                  isAIGenerated: meta?.columnType === 'ai-generated',
+                  metadata: meta ? {
+                    prompt: meta.prompt,
+                    provider: meta.provider,
+                    model: meta.model,
+                  } : undefined
+                }
+              })
             setColumns(generatedColumns)
           } else if (count > 0) {
             // If no data on this page but rows exist, load first page to get columns
             const firstPageData = await getFileData(fileId)
             if (firstPageData.length > 0) {
               const generatedColumns = Object.keys(firstPageData[0])
-                .filter(key => key !== 'row_index')
-                .map((key) => ({
-                  id: key,
-                  name: key,
-                  type: typeof firstPageData[0][key] === 'number' ? 'number' : 'string',
-                  visible: true
-                }))
+                .filter(key => key !== 'row_index' && !key.endsWith('__meta'))
+                .map((key) => {
+                  const meta = columnMetaMap.get(key)
+                  return {
+                    id: key,
+                    name: meta?.columnName || key,  // Use stored name or fallback to ID
+                    type: typeof firstPageData[0][key] === 'number' ? 'number' : 'string',
+                    visible: true,
+                    columnType: meta?.columnType,
+                    isAIGenerated: meta?.columnType === 'ai-generated',
+                    metadata: meta ? {
+                      prompt: meta.prompt,
+                      provider: meta.provider,
+                      model: meta.model,
+                    } : undefined
+                  }
+                })
               setColumns(generatedColumns)
             }
           }
@@ -200,6 +252,40 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
     loadFileData()
   }, [fileId, getFile, currentPage, pageSize, sortColumn, sortDirection, filters])
 
+  // Calculate column statistics for badges
+  const columnStats = useMemo(() => {
+    const stats: Record<string, { failed: number; edited: number; pending: number; succeeded: number; total: number }> = {}
+
+    columns.forEach(col => {
+      if (col.columnType !== 'ai-generated') return
+
+      const failed = data.filter(row => {
+        const meta = row[`${col.id}__meta`] as CellMetadata | undefined
+        return meta?.status === 'failed'
+      }).length
+
+      const edited = data.filter(row => {
+        const meta = row[`${col.id}__meta`] as CellMetadata | undefined
+        return meta?.edited === true
+      }).length
+
+      const pending = data.filter(row => {
+        const meta = row[`${col.id}__meta`] as CellMetadata | undefined
+        return meta?.status === 'pending'
+      }).length
+
+      stats[col.id] = {
+        failed,
+        edited,
+        pending,
+        succeeded: totalRows - failed - pending,
+        total: totalRows
+      }
+    })
+
+    return stats
+  }, [data, columns, totalRows])
+
   const addColumn = async (columnData: {
     name: string
     prompt: string
@@ -207,12 +293,28 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
     provider: ModelProvider
     searchWeb?: boolean
   }) => {
+    // Check for duplicate column name
+    const existingColumnMeta = await getAllColumnMetadata(fileId)
+    const duplicateExists = existingColumnMeta.some(
+      meta => meta.columnName?.toLowerCase() === columnData.name.toLowerCase()
+    )
+
+    if (duplicateExists) {
+      toast.error(`Column name "${columnData.name}" already exists. Please choose a different name.`)
+      return
+    }
+
+    // Check if this is a conversational history column
+    const isConvHistory = isConversationalHistoryPrompt(columnData.prompt)
+    const columnType = isConvHistory ? 'computed' : 'ai-generated'
+
     const newColumn: Column = {
       id: `col_${Date.now()}`,
       name: columnData.name,
       type: 'string',
       visible: true,
-      isAIGenerated: true,
+      columnType,
+      isAIGenerated: !isConvHistory,
       model: columnData.model,
       provider: columnData.provider,
       prompt: columnData.prompt,
@@ -239,6 +341,27 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
       console.log(`[SpreadsheetEditor] Column ${newColumn.id} added to DuckDB`)
     } catch (error) {
       console.error('[SpreadsheetEditor] Failed to add column to DuckDB:', error)
+    }
+
+    // Save column metadata
+    try {
+      await saveColumnMetadata({
+        fileId,
+        columnId: newColumn.id,
+        columnName: newColumn.name,  // Save user-friendly name
+        columnType,
+        model: isConvHistory ? undefined : columnData.model.id,
+        provider: isConvHistory ? undefined : columnData.provider.id,
+        prompt: columnData.prompt,
+        createdAt: Date.now()
+      })
+      console.log(`[SpreadsheetEditor] Column metadata saved for ${newColumn.id}`)
+
+      // Persist database after adding column and metadata
+      await persistDatabase()
+      console.log(`[SpreadsheetEditor] Database persisted after column creation`)
+    } catch (error) {
+      console.error('[SpreadsheetEditor] Failed to save column metadata:', error)
     }
 
     setIsAddColumnModalOpen(false)
@@ -273,8 +396,14 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
       if (isConversationalHistoryPrompt(columnData.prompt)) {
         const convConfig = parseConversationalHistoryConfig(columnData.prompt)
         if (convConfig) {
+          // Create column ID → name mapping for display
+          const columnIdToNameMap = new Map<string, string>()
+          columns.forEach(col => {
+            columnIdToNameMap.set(col.id, col.name)
+          })
+
           // Generate conversational history synchronously
-          const histories = generateConversationalHistory(data, convConfig)
+          const histories = generateConversationalHistory(data, convConfig, columnIdToNameMap)
 
           // Update all cells at once (in-memory)
           setData(prev => {
@@ -284,14 +413,18 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
             }))
           })
 
-          // Persist to DuckDB
+          // Persist to DuckDB - use the histories array directly
           try {
-            const updates = data.map((row, rowIndex) => ({
-              rowIndex: row.row_index ?? rowIndex,
-              value: histories[rowIndex]
+            const updates = histories.map((historyText, index) => ({
+              rowIndex: data[index]?.row_index ?? index,
+              value: historyText
             }))
             await batchUpdateColumn(fileId, column.id, updates)
             console.log(`[SpreadsheetEditor] Conversational history persisted to DuckDB for column ${column.id}`)
+
+            // Persist database after batch update
+            await persistDatabase()
+            console.log(`[SpreadsheetEditor] Database persisted after conversational history`)
           } catch (error) {
             console.error('[SpreadsheetEditor] Failed to persist conversational history to DuckDB:', error)
           }
@@ -322,18 +455,41 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
         (current, total) => setGenerationProgress({ current, total }),
         (rowIndex, result) => {
           // Update cell as soon as it completes
-          // Ensure LLM response is stored as plain string (prevent any parsing)
           const cellValue = String(result.content || result.error || '[Error]')
+          const dbRowIndex = data[rowIndex]?.row_index ?? rowIndex
 
           // Track for DuckDB batch update
-          const dbRowIndex = data[rowIndex]?.row_index ?? rowIndex
           generatedValues.push({ rowIndex: dbRowIndex, value: cellValue })
 
+          // Prepare cell metadata
+          const cellMeta: CellMetadata = {
+            fileId,
+            columnId: column.id,
+            rowIndex: dbRowIndex,
+            status: result.error ? 'failed' : 'success',
+            error: result.error,
+            errorType: result.errorType,
+            edited: false,
+            lastEditTime: undefined
+          }
+
+          // Save cell metadata immediately
+          saveCellMetadata(cellMeta).catch(err =>
+            console.error('[SpreadsheetEditor] Failed to save cell metadata:', err)
+          )
+
+          // Update in-memory state with metadata
           setData(prev => {
             const updated = [...prev]
             updated[rowIndex] = {
               ...updated[rowIndex],
-              [column.id]: cellValue
+              [column.id]: cellValue,
+              [`${column.id}__meta`]: {
+                status: cellMeta.status,
+                error: cellMeta.error,
+                errorType: cellMeta.errorType,
+                edited: false
+              }
             }
             return updated
           })
@@ -352,6 +508,13 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
         try {
           await batchUpdateColumn(fileId, column.id, generatedValues)
           console.log(`[SpreadsheetEditor] AI column data persisted to DuckDB for column ${column.id}`)
+
+          // Wait a bit for async metadata saves to complete
+          await new Promise(resolve => setTimeout(resolve, 100))
+
+          // Persist database after batch update and metadata saves
+          await persistDatabase()
+          console.log(`[SpreadsheetEditor] Database persisted after AI column generation`)
         } catch (error) {
           console.error('[SpreadsheetEditor] Failed to persist AI column data to DuckDB:', error)
         }
@@ -373,20 +536,82 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
   }
 
   const updateCellValue = async (rowIndex: number, columnId: string, value: any) => {
+    const column = columns.find(c => c.id === columnId)
+    const currentMeta = data[rowIndex]?.[`${columnId}__meta`] as CellMetadata | undefined
+    const currentValue = data[rowIndex]?.[columnId]
+
+    // Check if value actually changed
+    const valueChanged = String(value || '') !== String(currentValue || '')
+
+    // Only proceed if value changed
+    if (!valueChanged) {
+      console.log(`[SpreadsheetEditor] Cell [${rowIndex}, ${columnId}] value unchanged, skipping update`)
+      return
+    }
+
+    console.log('[CellEdit Debug] Editing cell:', {
+      rowIndex,
+      columnId,
+      columnName: column?.name,
+      isAIColumn: column?.columnType === 'ai-generated',
+      wasAlreadyEdited: currentMeta?.edited,
+      currentValue: String(currentValue),
+      newValue: String(value),
+      existingOriginalValue: currentMeta?.originalValue
+    })
+
     // Update in-memory state
     setData(prev =>
-      prev.map((row, index) =>
-        index === rowIndex
-          ? { ...row, [columnId]: value }
-          : row
-      )
+      prev.map((row, index) => {
+        if (index !== rowIndex) return row
+
+        const updated: any = { ...row, [columnId]: value }
+
+        // If AI column and has existing value, mark as edited
+        if (column?.columnType === 'ai-generated' && currentMeta?.status === 'success') {
+          const originalValueToSave = currentMeta.edited ? currentMeta.originalValue : currentValue
+
+          console.log('[CellEdit Debug] Saving metadata with originalValue:', originalValueToSave)
+
+          updated[`${columnId}__meta`] = {
+            ...currentMeta,
+            edited: true,
+            originalValue: originalValueToSave,
+            lastEditTime: Date.now()
+          }
+        }
+
+        return updated
+      })
     )
 
     // Persist to DuckDB
     try {
       const dbRowIndex = data[rowIndex]?.row_index ?? rowIndex
       await updateCellInDuckDB(fileId, dbRowIndex, columnId, value)
-      console.log(`[SpreadsheetEditor] Cell [${dbRowIndex}, ${columnId}] updated in DuckDB`)
+
+      // Update cell metadata if AI column
+      if (column?.columnType === 'ai-generated' && currentMeta?.status === 'success') {
+        const originalValueToSave = currentMeta.edited ? currentMeta.originalValue : currentValue
+
+        console.log('[CellEdit Debug] Persisting to database with originalValue:', originalValueToSave)
+
+        await saveCellMetadata({
+          fileId,
+          columnId,
+          rowIndex: dbRowIndex,
+          status: 'success',
+          error: currentMeta.error,
+          errorType: currentMeta.errorType,
+          edited: true,
+          originalValue: originalValueToSave,
+          lastEditTime: Date.now()
+        })
+      }
+
+      // Persist database after cell update
+      await persistDatabase()
+      console.log(`[SpreadsheetEditor] Cell [${dbRowIndex}, ${columnId}] updated and database persisted`)
     } catch (error) {
       console.error('[SpreadsheetEditor] Failed to update cell in DuckDB:', error)
     }
@@ -434,6 +659,250 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
 
   const clearAllFilters = () => {
     setFilters([])
+  }
+
+  // Open retry modal for a column
+  const handleOpenRetryModal = async (column: Column) => {
+    setSelectedRetryColumn(column)
+
+    // Load few-shot examples from edited cells
+    try {
+      console.log('[RetryModal Debug] Loading examples for column:', {
+        columnId: column.id,
+        columnName: column.name
+      })
+
+      const cellMeta = await getColumnCellMetadata(fileId, column.id)
+      console.log('[RetryModal Debug] Cell metadata count:', cellMeta.length)
+      console.log('[RetryModal Debug] Edited cells with originalValue:',
+        cellMeta.filter(m => m.edited && m.originalValue).length
+      )
+
+      const editedCells = cellMeta
+        .filter(m => m.edited && m.originalValue)
+        .map(m => {
+          const row = data.find(r => r.row_index === m.rowIndex)
+          const currentCellValue = row?.[column.id]
+
+          console.log('[RetryModal Debug] Example row', m.rowIndex, {
+            currentCellValue: String(currentCellValue),
+            originalValue: m.originalValue,
+            metadataColumnId: m.columnId
+          })
+
+          return {
+            input: row || {},
+            output: String(currentCellValue || ''),
+            originalOutput: m.originalValue,
+            rowIndex: Number(m.rowIndex),
+            editedAt: Number(m.lastEditTime || Date.now())
+          }
+        })
+      // Sort by most recent first
+      editedCells.sort((a, b) => b.editedAt - a.editedAt)
+
+      console.log('[RetryModal Debug] Final examples count:', editedCells.length)
+      if (editedCells.length > 0) {
+        console.log('[RetryModal Debug] First example:', {
+          output: editedCells[0].output,
+          originalOutput: editedCells[0].originalOutput,
+          rowIndex: editedCells[0].rowIndex
+        })
+      }
+
+      setRetryExamples(editedCells)
+    } catch (error) {
+      console.error('Failed to load examples:', error)
+      setRetryExamples([])
+    }
+
+    setIsRetryModalOpen(true)
+  }
+
+  // Retry failed/edited cells
+  const handleRetry = async (options: RetryOptions) => {
+    if (!selectedRetryColumn) return
+
+    const column = selectedRetryColumn
+    const columnId = column.id
+
+    try {
+      // Get all cell metadata for this column
+      const allCellMeta = await getColumnCellMetadata(fileId, columnId)
+
+      // Determine which rows to regenerate based on scope
+      let targetRowIndices: number[] = []
+
+      if (options.scope === 'failed') {
+        targetRowIndices = allCellMeta
+          .filter(m => m.status === 'failed')
+          .map(m => m.rowIndex)
+      } else if (options.scope === 'failed-edited') {
+        targetRowIndices = allCellMeta
+          .filter(m => m.status === 'failed' || m.edited)
+          .map(m => m.rowIndex)
+      } else {
+        // 'all' - regenerate entire column
+        targetRowIndices = data.map((_, idx) => data[idx]?.row_index ?? idx)
+      }
+
+      // Get rows to regenerate
+      const targetRows = data.filter((row, idx) =>
+        targetRowIndices.includes(row.row_index ?? idx)
+      )
+
+      if (targetRows.length === 0) {
+        toast.info('No cells to regenerate')
+        return
+      }
+
+      // Build few-shot prompt if enabled
+      let promptWithExamples = column.prompt || ''
+      if (options.includeFewShot && options.selectedExamples.length > 0) {
+        // Select up to 10 examples using random sampling
+        const selectedExamples = selectFewShotExamples(options.selectedExamples, 10)
+        const fewShotPrefix = buildFewShotPrompt(selectedExamples, column.name)
+        promptWithExamples = fewShotPrefix + '\n\n' + promptWithExamples
+      }
+
+      // Show toast notification
+      const hiddenCount = totalRows > data.length ? targetRowIndices.length - targetRows.length : 0
+      if (hiddenCount > 0) {
+        toast.info(
+          `Regenerating ${targetRowIndices.length} cells (${hiddenCount} hidden by filters)`
+        )
+      } else {
+        toast.info(`Regenerating ${targetRows.length} cells...`)
+      }
+
+      // Mark cells as pending
+      const pendingMeta: CellMetadata[] = targetRowIndices.map(rowIdx => ({
+        fileId,
+        columnId,
+        rowIndex: rowIdx,
+        status: 'pending' as const,
+        edited: false
+      }))
+      await batchSaveCellMetadata(pendingMeta)
+
+      // Update in-memory state to show pending
+      setData(prev => prev.map(row => {
+        if (!targetRowIndices.includes(row.row_index ?? 0)) return row
+        return {
+          ...row,
+          [`${columnId}__meta`]: { status: 'pending' as const, edited: false }
+        }
+      }))
+
+      // Set loading cells
+      const loadingSet = new Set<string>()
+      targetRows.forEach((_, idx) => loadingSet.add(`${idx}-${columnId}`))
+      setLoadingCells(loadingSet)
+
+      // Generate data with callback for each cell
+      const columnRefs = extractColumnReferences(promptWithExamples)
+      const modelToUse = options.model || column.model!
+      const providerToUse = options.provider || column.provider!
+
+      // If model changed, update column metadata
+      if (options.model && options.provider) {
+        await saveColumnMetadata({
+          fileId,
+          columnId,
+          columnName: column.name,  // Preserve column name
+          columnType: 'ai-generated',
+          model: options.model.id,
+          provider: options.provider.id,
+          prompt: column.prompt,
+          createdAt: Date.now()
+        })
+
+        // Update in-memory column data
+        setColumns(prev => prev.map(col =>
+          col.id === columnId
+            ? { ...col, model: options.model, provider: options.provider }
+            : col
+        ))
+      }
+
+      await generateColumnData(
+        targetRows,
+        columnId,
+        promptWithExamples,
+        modelToUse,
+        providerToUse,
+        columnRefs,
+        (current, total) => setGenerationProgress({ current, total }),
+        (rowIndex, result) => {
+          const cellValue = String(result.content || result.error || '[Error]')
+          const dbRowIndex = targetRows[rowIndex]?.row_index ?? rowIndex
+
+          // Save cell metadata
+          saveCellMetadata({
+            fileId,
+            columnId,
+            rowIndex: dbRowIndex,
+            status: result.error ? 'failed' : 'success',
+            error: result.error,
+            errorType: result.errorType,
+            edited: false,
+            lastEditTime: Date.now()
+          }).catch(err => console.error('Failed to save cell metadata:', err))
+
+          // Update in-memory state
+          setData(prev => {
+            const updated = [...prev]
+            const dataIdx = prev.findIndex(r => r.row_index === dbRowIndex)
+            if (dataIdx >= 0) {
+              updated[dataIdx] = {
+                ...updated[dataIdx],
+                [columnId]: cellValue,
+                [`${columnId}__meta`]: {
+                  status: result.error ? 'failed' as const : 'success' as const,
+                  error: result.error,
+                  errorType: result.errorType,
+                  edited: false
+                }
+              }
+            }
+            return updated
+          })
+
+          // Update cell value in DuckDB
+          updateCellInDuckDB(fileId, dbRowIndex, columnId, cellValue).catch(err =>
+            console.error('Failed to update cell:', err)
+          )
+
+          // Remove from loading set
+          setLoadingCells(prev => {
+            const next = new Set(prev)
+            next.delete(`${rowIndex}-${columnId}`)
+            return next
+          })
+        }
+      )
+
+      // Success toast
+      if (hiddenCount > 0) {
+        toast.success(
+          `${targetRowIndices.length} cells regenerated. Clear filters to view ${hiddenCount} updated cells.`,
+          {
+            action: {
+              label: 'Clear Filters',
+              onClick: () => clearAllFilters()
+            }
+          }
+        )
+      } else {
+        toast.success(`${targetRows.length} cells regenerated successfully`)
+      }
+    } catch (error) {
+      console.error('Retry failed:', error)
+      toast.error('Failed to regenerate cells')
+    } finally {
+      setLoadingCells(new Set())
+      setGenerationProgress({ current: 0, total: 0 })
+    }
   }
 
   const getOperatorsForColumn = (columnId: string): FilterOperator[] => {
@@ -783,6 +1252,8 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
                   sortColumn={sortColumn}
                   sortDirection={sortDirection}
                   onSort={handleSort}
+                  columnStats={columnStats}
+                  onOpenRetryModal={handleOpenRetryModal}
                 />
               </CardContent>
 
@@ -806,10 +1277,77 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
                 }}
                 onAddColumn={addColumn}
                 template={selectedColumnTemplate}
-                availableColumns={columns.map(col => col.name)}
+                availableColumns={columns.map(col => ({ id: col.id, name: col.name }))}
                 dataRows={data}
+                existingColumnNames={columns.map(col => col.name)}
               />
             </Card>
+
+            {/* Retry Modal */}
+            {selectedRetryColumn && (() => {
+              // Create column ID → name mapping
+              const columnIdToNameMap = new Map<string, string>()
+              columns.forEach(col => {
+                columnIdToNameMap.set(col.id, col.name)
+              })
+
+              return (
+                <RetryModal
+                  isOpen={isRetryModalOpen}
+                  onClose={() => {
+                    setIsRetryModalOpen(false)
+                    setSelectedRetryColumn(null)
+                    setRetryExamples([])
+                  }}
+                  onRetry={async (options) => {
+                    // Load few-shot examples dynamically if needed
+                    if (options.includeFewShot) {
+                      const cellMeta = await getColumnCellMetadata(fileId, selectedRetryColumn.id)
+                      const editedCells = cellMeta
+                        .filter(m => m.edited && m.originalValue)
+                        .map(m => {
+                          const row = data.find(r => r.row_index === m.rowIndex)
+                          return {
+                            input: row || {},
+                            output: String(row?.[selectedRetryColumn.id] || ''),
+                            originalOutput: m.originalValue,
+                            rowIndex: m.rowIndex,
+                            editedAt: m.lastEditTime || Date.now()
+                          }
+                        })
+                      // Sort by most recent first
+                      editedCells.sort((a, b) => b.editedAt - a.editedAt)
+
+                      // Pass examples to retry handler
+                      await handleRetry({
+                        ...options,
+                        selectedExamples: editedCells
+                      })
+                    } else {
+                      await handleRetry(options)
+                    }
+                  }}
+                  columnName={selectedRetryColumn.name}
+                  columnPrompt={selectedRetryColumn.prompt}
+                  columnIdToNameMap={columnIdToNameMap}
+                  stats={columnStats[selectedRetryColumn.id] || {
+                    failed: 0,
+                    edited: 0,
+                    succeeded: 0,
+                    total: 0
+                  }}
+                  examples={retryExamples}
+                  hasRateLimitErrors={
+                    data.some(row => {
+                      const meta = row[`${selectedRetryColumn.id}__meta`] as CellMetadata | undefined
+                      return meta?.errorType === 'rate_limit'
+                    })
+                  }
+                  currentModel={selectedRetryColumn.model}
+                  currentProvider={selectedRetryColumn.provider}
+                />
+              )
+            })()}
           </TabsContent>
 
           <TabsContent value="embeddings" className="mt-2">

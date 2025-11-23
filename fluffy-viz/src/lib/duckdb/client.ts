@@ -182,3 +182,45 @@ export async function resetDatabase(): Promise<void> {
     initializationPromise = null;
   }
 }
+
+/**
+ * Completely reset the database including OPFS persistence
+ * WARNING: This deletes ALL data permanently
+ */
+export async function completelyResetDatabase(): Promise<void> {
+  console.log('[DuckDB] Starting complete database reset...');
+
+  try {
+    // Step 1: Terminate database instance
+    if (dbInstance) {
+      await dbInstance.terminate();
+      dbInstance = null;
+      initializationPromise = null;
+      console.log('[DuckDB] Database instance terminated');
+    }
+
+    // Step 2: Delete the OPFS database file
+    if ('storage' in navigator && 'getDirectory' in navigator.storage) {
+      try {
+        const opfsRoot = await navigator.storage.getDirectory();
+        await opfsRoot.removeEntry('fluffyviz.db', { recursive: true });
+        console.log('[DuckDB] OPFS database file deleted');
+      } catch (error: any) {
+        if (error?.name === 'NotFoundError') {
+          console.log('[DuckDB] OPFS database file does not exist');
+        } else {
+          console.warn('[DuckDB] Failed to delete OPFS file:', error);
+        }
+      }
+    }
+
+    // Step 3: Reinitialize database with schema
+    const { initializeSchema } = await import('./schema');
+    await initializeSchema();
+
+    console.log('[DuckDB] ✅ Complete database reset successful');
+  } catch (error) {
+    console.error('[DuckDB] Complete database reset failed:', error);
+    throw error;
+  }
+}

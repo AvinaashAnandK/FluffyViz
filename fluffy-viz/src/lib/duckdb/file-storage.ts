@@ -65,15 +65,33 @@ export async function saveFileToDuckDB(
     if (existingId) {
       try {
         await deleteFileTable(existingId);
+        // Delete old column metadata
+        await executeQuery('DELETE FROM column_metadata WHERE file_id = ?', [existingId]);
       } catch (error) {
         console.warn('[DuckDB File Storage] No existing table to delete:', error);
       }
     }
 
-    // Create data table
-    await createFileTable(id, parsedData);
+    // Generate IDs for all columns and create metadata
+    const { transformedData, columnMetadata } = generateColumnIdsAndTransformData(
+      parsedData,
+      id
+    );
 
-    // Store metadata
+    console.log(`[DuckDB File Storage] Generated IDs for ${columnMetadata.length} columns`);
+
+    // Create data table with transformed data
+    await createFileTable(id, transformedData);
+
+    // Store column metadata for all uploaded columns
+    const { saveColumnMetadata } = await import('./operations');
+    for (const meta of columnMetadata) {
+      await saveColumnMetadata(meta);
+    }
+
+    console.log(`[DuckDB File Storage] Saved metadata for ${columnMetadata.length} columns`);
+
+    // Store file metadata
     const now = new Date();
     const version = existingId ? await getFileVersion(existingId) + 1 : 1;
 
@@ -112,12 +130,84 @@ export async function saveFileToDuckDB(
       await deleteFileTable(id);
       if (!existingId) {
         await executeQuery('DELETE FROM files WHERE id = ?', [id]);
+        await executeQuery('DELETE FROM column_metadata WHERE file_id = ?', [id]);
       }
     } catch {
       // Ignore cleanup errors
     }
     throw error;
   }
+}
+
+/**
+ * Generate unique IDs for all columns and transform data to use IDs as keys
+ */
+function generateColumnIdsAndTransformData(
+  parsedData: Record<string, any>[],
+  fileId: string
+): {
+  transformedData: Record<string, any>[];
+  columnMetadata: Array<{
+    fileId: string;
+    columnId: string;
+    columnName: string;
+    columnType: 'data' | 'ai-generated' | 'computed';
+    createdAt: number;
+  }>;
+} {
+  if (parsedData.length === 0) {
+    return { transformedData: [], columnMetadata: [] };
+  }
+
+  // Collect all unique column names from all rows (handles sparse data)
+  const originalColumnNames = new Set<string>();
+  for (const row of parsedData) {
+    for (const key of Object.keys(row)) {
+      originalColumnNames.add(key);
+    }
+  }
+
+  const columnNames = Array.from(originalColumnNames);
+  const timestamp = Date.now();
+
+  // Generate ID for each column
+  const columnIdMap = new Map<string, string>();
+  const columnMetadata: Array<{
+    fileId: string;
+    columnId: string;
+    columnName: string;
+    columnType: 'data' | 'ai-generated' | 'computed';
+    createdAt: number;
+  }> = [];
+
+  columnNames.forEach((originalName, index) => {
+    const columnId = `col_${timestamp}_${index}`;
+    columnIdMap.set(originalName, columnId);
+
+    columnMetadata.push({
+      fileId,
+      columnId,
+      columnName: originalName,
+      columnType: 'data',
+      createdAt: timestamp,
+    });
+  });
+
+  // Transform all rows to use column IDs instead of original names
+  const transformedData = parsedData.map((row) => {
+    const transformedRow: Record<string, any> = {};
+
+    for (const [originalName, value] of Object.entries(row)) {
+      const columnId = columnIdMap.get(originalName);
+      if (columnId) {
+        transformedRow[columnId] = value;
+      }
+    }
+
+    return transformedRow;
+  });
+
+  return { transformedData, columnMetadata };
 }
 
 /**
