@@ -7,17 +7,11 @@ import { AppSidebar } from '@/components/app-sidebar'
 import {
   SidebarProvider,
   SidebarInset,
-  SidebarTrigger,
-  useSidebar,
 } from '@/components/ui/sidebar'
-import { Badge } from '@/components/ui/badge'
-import { useFileStorage } from '@/hooks/use-file-storage'
 
 function EditPageContent() {
   const { fileId } = useParams()
   const router = useRouter()
-  const { fileCount } = useFileStorage()
-  const { open } = useSidebar()
 
   // Listen for file deletion and selection events
   useEffect(() => {
@@ -53,29 +47,6 @@ function EditPageContent() {
 
   return (
     <div className="min-h-screen bg-background pt-2">
-      {/* Header with Sidebar Toggle */}
-      {/* <div className="flex items-center justify-between p-4 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 sticky top-0 z-50">
-        <div className="flex items-center space-x-4">
-          <div className="flex items-center">
-            {!open && fileCount > 0 && (
-              <Badge variant="secondary" className="mr-2">
-                {fileCount}
-              </Badge>
-            )}
-            <SidebarTrigger className="h-8 w-8" />
-          </div>
-          <div className="flex items-center space-x-2">
-            <img
-              src="/FluffyVisualizer.png"
-              alt="FluffyViz Logo"
-              className="w-8 h-8 object-contain rounded-md"
-            />
-            <h1 className="text-xl font-bold text-primary">FluffyViz</h1>
-          </div>
-        </div>
-      </div> */}
-
-      {/* Spreadsheet Editor */}
       <SpreadsheetEditor fileId={fileId as string} />
     </div>
   )

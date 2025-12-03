@@ -39,6 +39,15 @@ const flattenCache = new Map<string, Record<string, any>>();
 const CACHE_MAX_SIZE = 100;
 
 /**
+ * Clear the parser cache
+ * Call this on file delete, "Clear All Files" action, or route change
+ */
+export function clearParserCache(): void {
+  flattenCache.clear()
+  console.log('[Parser] Cache cleared')
+}
+
+/**
  * Flattens a nested object into a single-level object with dot notation keys
  * Supports multiple strategies for handling arrays and nested structures
  * Includes memoization for performance optimization

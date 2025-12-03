@@ -26,6 +26,7 @@ export interface ProviderConfig {
   enabled: boolean
   capabilities: ProviderCapabilities
   baseUrl?: string
+  batchSize?: number // Number of rows to process per batch (default: 5)
 }
 
 export interface ProviderDefaults {

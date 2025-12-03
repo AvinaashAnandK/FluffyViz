@@ -5,12 +5,18 @@ import { X, AlertCircle } from 'lucide-react'
 import { ModelSelector } from './ModelSelector'
 import { ProviderSelector } from './ProviderSelector'
 import { PromptComposer } from './PromptComposer'
+import { SchemaBuilder } from './SchemaBuilder'
 import { ConversationalHistoryConfig, ConversationalHistoryConfigData } from './ConversationalHistoryConfig'
 import { Model, ModelProvider } from '@/types/models'
 import { getDefaultProviderForModel } from '@/lib/providers'
-import { loadPromptConfig } from '@/config/ai-column-templates'
+import { loadPromptConfig, PromptConfig } from '@/config/ai-column-templates'
 import { ColumnMeta } from '@/lib/prompt-serializer'
 import { loadProviderSettings, getEnabledProviders, type ProviderSettings } from '@/config/provider-settings'
+import type { FieldSchema, OutputSchema, ColumnExpansionMode } from '@/types/structured-output'
+import { schemaToPromptFormat, isValidOutputSchema } from '@/lib/schema-utils'
+import { Label } from '@/components/ui/label'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+import { toast } from 'sonner'
 
 interface ColumnInfo {
   id: string
@@ -25,6 +31,7 @@ interface AddColumnModalProps {
     prompt: string
     model: Model
     provider: ModelProvider
+    outputSchema?: OutputSchema
   }) => void
   template: string | null
   availableColumns: ColumnInfo[]
@@ -46,10 +53,23 @@ export function AddColumnModal({
   const [promptValid, setPromptValid] = useState(false)
   const [selectedModel, setSelectedModel] = useState<Model | undefined>(undefined)
   const [selectedProvider, setSelectedProvider] = useState<ModelProvider | undefined>(undefined)
-  const [templateConfig, setTemplateConfig] = useState<any>(null)
+  const [templateConfig, setTemplateConfig] = useState<PromptConfig | null>(null)
   const [providerConfig, setProviderConfig] = useState<ProviderSettings | null>(null)
   const [loadingConfig, setLoadingConfig] = useState(true)
   const [convHistoryConfig, setConvHistoryConfig] = useState<ConversationalHistoryConfigData | null>(null)
+
+  // Structured output state
+  const [outputMode, setOutputMode] = useState<'text' | 'structured'>('text')
+  const [schemaFields, setSchemaFields] = useState<FieldSchema[]>([])
+  const [expansionMode, setExpansionMode] = useState<'single' | 'expanded' | 'both'>('expanded')
+
+  // Validate output schema
+  const outputSchema: OutputSchema = {
+    mode: outputMode,
+    fields: schemaFields,
+    expansionMode: outputMode === 'structured' ? expansionMode : undefined
+  }
+  const isSchemaValid = outputMode === 'text' || isValidOutputSchema(outputSchema)
 
   // Check if current template is conversational history
   const isConversationalHistory = template === 'conversational_history'
@@ -102,16 +122,41 @@ export function AddColumnModal({
       if (template === 'conversational_history') {
         setTemplateConfig(null)
         setColumnName(`${template}_column`)
+        setOutputMode('text')
+        setSchemaFields([])
       } else {
         loadPromptConfig(template).then(config => {
           setTemplateConfig(config)
           setColumnName(`${template}_column`)
+
+          // Pre-populate output schema from template
+          if (config.output_schema?.mode === 'structured' && config.output_schema.fields?.length > 0) {
+            setOutputMode('structured')
+            setSchemaFields(config.output_schema.fields.map(field => ({
+              id: field.id,
+              name: field.name,
+              type: field.type as FieldSchema['type'],
+              description: field.description,
+              required: field.required,
+              enumOptions: field.enumOptions,
+              minItems: field.minItems,
+              maxItems: field.maxItems
+            })))
+          } else {
+            setOutputMode('text')
+            setSchemaFields([])
+          }
         }).catch(err => {
           console.error('Error loading template config:', err)
+          toast.error(`Failed to load template "${template}"`, {
+            description: 'Please try again or select a different template.'
+          })
         })
       }
     } else {
       setTemplateConfig(null)
+      setOutputMode('text')
+      setSchemaFields([])
     }
   }, [template])
 
@@ -148,13 +193,14 @@ export function AddColumnModal({
       })
     } else {
       // Regular column validation
-      if (!columnName.trim() || !prompt.trim() || !promptValid || !selectedModel || !selectedProvider) return
+      if (!columnName.trim() || !prompt.trim() || !promptValid || !selectedModel || !selectedProvider || !isSchemaValid) return
 
       onAddColumn({
         name: columnName.trim(),
         prompt: prompt.trim(),
         model: selectedModel,
-        provider: selectedProvider
+        provider: selectedProvider,
+        outputSchema: outputMode === 'structured' ? outputSchema : undefined
       })
     }
 
@@ -165,6 +211,8 @@ export function AddColumnModal({
     setSelectedModel(undefined)
     setSelectedProvider(undefined)
     setConvHistoryConfig(null)
+    setOutputMode('text')
+    setSchemaFields([])
   }
 
   return (
@@ -202,19 +250,13 @@ export function AddColumnModal({
             <h3 className="text-lg font-semibold mb-2 text-gray-900 dark:text-gray-100">
               No LLM Provider Configured
             </h3>
-            <p className="text-sm text-gray-600 dark:text-gray-400 mb-4 max-w-md">
+            <p className="text-sm text-gray-600 dark:text-gray-400 max-w-md">
               To use AI-powered columns, you need to configure at least one LLM provider
-              with an API key.
+              with an API key in your environment variables (.env.local file).
             </p>
-            <button
-              onClick={() => {
-                // TODO: Navigate to provider configuration
-                console.log('Navigate to provider config')
-              }}
-              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
-            >
-              Add LLM Provider Keys
-            </button>
+            <p className="text-xs text-gray-500 dark:text-gray-500 mt-3 max-w-md">
+              Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or other provider keys.
+            </p>
           </div>
         )}
 
@@ -260,9 +302,59 @@ export function AddColumnModal({
                 {/* Prompt Composer */}
                 <PromptComposer
                   availableColumns={columnsMeta}
-                  initialTemplate={templateConfig}
+                  initialTemplate={templateConfig ?? undefined}
                   onPromptChange={handlePromptChange}
                 />
+
+                {/* Output Format Toggle */}
+                <div className="space-y-3">
+                  <Label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    Output Format
+                  </Label>
+                  <RadioGroup
+                    value={outputMode}
+                    onValueChange={(value: 'text' | 'structured') => setOutputMode(value)}
+                    className="flex gap-4"
+                  >
+                    <div className="flex items-center space-x-2">
+                      <RadioGroupItem value="text" id="output-text" />
+                      <Label htmlFor="output-text" className="text-sm cursor-pointer">
+                        Text
+                      </Label>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <RadioGroupItem value="structured" id="output-structured" />
+                      <Label htmlFor="output-structured" className="text-sm cursor-pointer">
+                        Structured Data
+                      </Label>
+                    </div>
+                  </RadioGroup>
+                </div>
+
+                {/* Schema Builder (shown when structured mode selected) */}
+                {outputMode === 'structured' && (
+                  <div className="space-y-3">
+                    <SchemaBuilder
+                      fields={schemaFields}
+                      onChange={setSchemaFields}
+                      expansionMode={expansionMode}
+                      onExpansionModeChange={setExpansionMode}
+                      baseColumnName={columnName}
+                    />
+
+                    {/* Schema Preview */}
+                    {schemaFields.length > 0 && (
+                      <div>
+                        <Label className="text-xs text-gray-500 dark:text-gray-400">
+                          Expected Output Format
+                        </Label>
+                        <pre className="mt-1 p-2 bg-gray-100 dark:bg-gray-800 rounded text-xs font-mono overflow-x-auto">
+                          {schemaToPromptFormat(schemaFields)}
+                        </pre>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Provider and Model Selection */}
                 <div className="space-y-4">
@@ -306,7 +398,7 @@ export function AddColumnModal({
               isDuplicateName ||
               (isConversationalHistory
                 ? !columnName.trim() || !convHistoryConfig
-                : !selectedModel || !selectedProvider || !columnName.trim() || !prompt.trim() || !promptValid)
+                : !selectedModel || !selectedProvider || !columnName.trim() || !prompt.trim() || !promptValid || !isSchemaValid)
             }
             className="w-full px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed rounded-md transition-colors"
           >

@@ -4,7 +4,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { generateCompletion, interpolatePromptForRow } from '@/lib/ai-inference'
+import { generateCompletion, generateStructuredCompletion, interpolatePromptForRow } from '@/lib/ai-inference'
 import {
   getProviderApiKey,
   isProviderEnabled,
@@ -12,6 +12,7 @@ import {
 } from '@/config/provider-settings'
 import { loadProviderSettingsServer } from '@/lib/provider-config-server'
 import { loadModelRegistryServer, getModelById } from '@/lib/model-registry-server'
+import type { OutputSchema } from '@/types/structured-output'
 
 export async function POST(req: NextRequest) {
   try {
@@ -22,13 +23,18 @@ export async function POST(req: NextRequest) {
       rows,
       temperature = 0.7,
       maxTokens = 500,
+      outputSchema,
     } = await req.json()
+
+    const isStructuredOutput = outputSchema?.mode === 'structured' && outputSchema?.fields?.length > 0
 
     console.log('[Generate Column] Request:', {
       providerId,
       modelId,
       rowCount: rows?.length,
-      hasPrompt: !!prompt
+      hasPrompt: !!prompt,
+      isStructuredOutput,
+      fieldCount: outputSchema?.fields?.length || 0
     })
 
     // Validate required fields
@@ -83,8 +89,12 @@ export async function POST(req: NextRequest) {
     console.log('[Generate Column] Processing', rows.length, 'rows')
 
     // Process rows in batches for parallelization
-    const BATCH_SIZE = 5
+    // Use provider-specific batch size if configured, otherwise default to 5
+    const providerConfig = config.providers[providerId as ProviderKey]
+    const BATCH_SIZE = providerConfig?.batchSize ?? 5
     const results: Array<{ content: string; error?: string; rowIndex: number }> = []
+
+    console.log(`[Generate Column] Using batch size: ${BATCH_SIZE}`)
 
     for (let batchStart = 0; batchStart < rows.length; batchStart += BATCH_SIZE) {
       const batchEnd = Math.min(batchStart + BATCH_SIZE, rows.length)
@@ -99,20 +109,39 @@ export async function POST(req: NextRequest) {
         try {
           const interpolatedPrompt = interpolatePromptForRow(prompt, row)
 
-          console.log(`[Generate Column] Row ${rowIndex + 1}/${rows.length} - Prompt length:`, interpolatedPrompt.length)
+          console.log(`[Generate Column] Row ${rowIndex + 1}/${rows.length} - Prompt length:`, interpolatedPrompt.length, isStructuredOutput ? '(structured)' : '(text)')
 
-          const result = await generateCompletion({
-            model: { id: modelId, name: modelConfig.name },
-            provider: {
-              id: providerId,
-              name: providerId,
-              apiKey: apiKey,
-              displayName: (modelConfig as any).provider || providerId
-            },
-            prompt: interpolatedPrompt,
-            temperature,
-            maxTokens,
-          })
+          let result
+          if (isStructuredOutput) {
+            // Use structured completion for JSON output
+            result = await generateStructuredCompletion({
+              model: { id: modelId, name: modelConfig.name },
+              provider: {
+                id: providerId,
+                name: providerId,
+                apiKey: apiKey,
+                displayName: (modelConfig as any).provider || providerId
+              },
+              prompt: interpolatedPrompt,
+              temperature,
+              maxTokens,
+              outputSchema: outputSchema as OutputSchema,
+            })
+          } else {
+            // Use regular text completion
+            result = await generateCompletion({
+              model: { id: modelId, name: modelConfig.name },
+              provider: {
+                id: providerId,
+                name: providerId,
+                apiKey: apiKey,
+                displayName: (modelConfig as any).provider || providerId
+              },
+              prompt: interpolatedPrompt,
+              temperature,
+              maxTokens,
+            })
+          }
 
           if (result.error) {
             console.error(`[Generate Column] Row ${rowIndex + 1} error:`, result.error)

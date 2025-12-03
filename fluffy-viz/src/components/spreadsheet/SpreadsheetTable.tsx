@@ -1,13 +1,15 @@
 'use client'
 
-import { useState } from 'react'
-import { Plus, Loader2, ArrowUpDown, ArrowUp, ArrowDown, ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { Plus, Loader2, ArrowUpDown, ArrowUp, ArrowDown, ChevronLeft, ChevronRight, RefreshCw, Trash2 } from 'lucide-react'
 import type { Column, SpreadsheetData } from './SpreadsheetEditor'
 import { getTemplateGroups } from '@/config/ai-column-templates'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { AiCell } from './AiCell'
 import type { CellMetadata } from '@/lib/duckdb'
+import { schemaToPromptFormat } from '@/lib/schema-utils'
+import { formatPromptForDisplay } from '@/lib/prompt-utils'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -22,6 +24,17 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
 
 interface SpreadsheetTableProps {
   data: SpreadsheetData[]
@@ -51,6 +64,7 @@ interface SpreadsheetTableProps {
     total: number
   }>
   onOpenRetryModal?: (column: Column) => void
+  onDeleteColumn?: (columnId: string) => void
 }
 
 // Get template groups with hierarchy
@@ -83,16 +97,45 @@ export function SpreadsheetTable({
   columnFilters = {},
   onFilterChange,
   columnStats = {},
-  onOpenRetryModal
+  onOpenRetryModal,
+  onDeleteColumn
 }: SpreadsheetTableProps) {
   const [editingCell, setEditingCell] = useState<{row: number, col: string} | null>(null)
   const [editValue, setEditValue] = useState('')
   const [selectedCell, setSelectedCell] = useState<{row: number, col: string} | null>(null)
   const [isDragging, setIsDragging] = useState(false)
   const [dragRange, setDragRange] = useState<{startRow: number, endRow: number, col: string} | null>(null)
+  const [deletingColumnId, setDeletingColumnId] = useState<string | null>(null)
+
+  // Refs for drag event listener cleanup
+  const mouseMoveRef = useRef<((e: MouseEvent) => void) | null>(null)
+  const mouseUpRef = useRef<(() => void) | null>(null)
+
+  // Cleanup drag event listeners on unmount
+  useEffect(() => {
+    return () => {
+      if (mouseMoveRef.current) {
+        document.removeEventListener('mousemove', mouseMoveRef.current)
+      }
+      if (mouseUpRef.current) {
+        document.removeEventListener('mouseup', mouseUpRef.current)
+      }
+    }
+  }, [])
 
   const visibleColumns = columns.filter(col => col.visible)
   const totalPages = Math.ceil(totalRows / pageSize)
+
+  // Handle column delete with loading state
+  const handleDeleteColumn = useCallback(async (columnId: string) => {
+    if (!onDeleteColumn) return
+    setDeletingColumnId(columnId)
+    try {
+      await onDeleteColumn(columnId)
+    } finally {
+      setDeletingColumnId(null)
+    }
+  }, [onDeleteColumn])
 
   const handleSort = (columnId: string) => {
     if (onSort) {
@@ -161,9 +204,19 @@ export function SpreadsheetTable({
         autofillCells(dragRange)
       }
       setDragRange(null)
-      document.removeEventListener('mousemove', handleMouseMove)
-      document.removeEventListener('mouseup', handleMouseUp)
+      if (mouseMoveRef.current) {
+        document.removeEventListener('mousemove', mouseMoveRef.current)
+      }
+      if (mouseUpRef.current) {
+        document.removeEventListener('mouseup', mouseUpRef.current)
+      }
+      mouseMoveRef.current = null
+      mouseUpRef.current = null
     }
+
+    // Store refs for cleanup
+    mouseMoveRef.current = handleMouseMove
+    mouseUpRef.current = handleMouseUp
 
     document.addEventListener('mousemove', handleMouseMove)
     document.addEventListener('mouseup', handleMouseUp)
@@ -310,15 +363,64 @@ export function SpreadsheetTable({
                                     <RefreshCw className="h-3 w-3" />
                                   </Button>
                                 )}
+                                {isAIColumn && onDeleteColumn && (
+                                  <AlertDialog>
+                                    <AlertDialogTrigger asChild>
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={(e) => e.stopPropagation()}
+                                        className="h-6 w-6 p-0 text-destructive hover:text-destructive"
+                                        title="Delete column"
+                                        disabled={deletingColumnId === column.id}
+                                      >
+                                        {deletingColumnId === column.id ? (
+                                          <Loader2 className="h-3 w-3 animate-spin" />
+                                        ) : (
+                                          <Trash2 className="h-3 w-3" />
+                                        )}
+                                      </Button>
+                                    </AlertDialogTrigger>
+                                    <AlertDialogContent onClick={(e) => e.stopPropagation()}>
+                                      <AlertDialogHeader>
+                                        <AlertDialogTitle>Delete Column</AlertDialogTitle>
+                                        <AlertDialogDescription>
+                                          Are you sure you want to delete &quot;{column.name}&quot;? This action cannot be undone.
+                                        </AlertDialogDescription>
+                                      </AlertDialogHeader>
+                                      <AlertDialogFooter>
+                                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                        <AlertDialogAction
+                                          onClick={() => handleDeleteColumn(column.id)}
+                                          className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                        >
+                                          Delete
+                                        </AlertDialogAction>
+                                      </AlertDialogFooter>
+                                    </AlertDialogContent>
+                                  </AlertDialog>
+                                )}
                                 {getSortIcon(column.id)}
                               </div>
                             </div>
                           </div>
                         </TooltipTrigger>
                         <TooltipContent side="bottom" className="max-w-md">
-                          <div className="space-y-1">
-                            <p className="font-semibold text-xs">Prompt:</p>
-                            <p className="text-xs whitespace-pre-wrap">{column.metadata.prompt}</p>
+                          <div className="space-y-2">
+                            <div>
+                              <p className="font-semibold text-xs">Prompt:</p>
+                              <p className="text-xs whitespace-pre-wrap">
+                                {formatPromptForDisplay(column.metadata.prompt, columns)}
+                              </p>
+                            </div>
+                            {column.metadata.outputSchema?.mode === 'structured' && column.metadata.outputSchema.fields.length > 0 && (
+                              <div>
+                                <p className="font-semibold text-xs">Expected Output Format:</p>
+                                <pre className="text-xs whitespace-pre-wrap font-mono bg-gray-700 text-white p-1 rounded mt-1">
+                                  {schemaToPromptFormat(column.metadata.outputSchema.fields)}
+                                </pre>
+                              </div>
+                            )}
                           </div>
                         </TooltipContent>
                       </Tooltip>
@@ -369,6 +471,43 @@ export function SpreadsheetTable({
                               <RefreshCw className="h-3 w-3" />
                             </Button>
                           )}
+                          {isAIColumn && onDeleteColumn && (
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="h-6 w-6 p-0 text-destructive hover:text-destructive"
+                                  title="Delete column"
+                                  disabled={deletingColumnId === column.id}
+                                >
+                                  {deletingColumnId === column.id ? (
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                  ) : (
+                                    <Trash2 className="h-3 w-3" />
+                                  )}
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent onClick={(e) => e.stopPropagation()}>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>Delete Column</AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    Are you sure you want to delete &quot;{column.name}&quot;? This action cannot be undone.
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                  <AlertDialogAction
+                                    onClick={() => handleDeleteColumn(column.id)}
+                                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                  >
+                                    Delete
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          )}
                           {getSortIcon(column.id)}
                         </div>
                       </div>
@@ -385,8 +524,8 @@ export function SpreadsheetTable({
           {data.map((row, rowIndex) => (
             <tr key={rowIndex}>
               {/* Row number */}
-              <td className="w-16 h-24 border  bg-gray-50 text-center text-sm text-gray-600">
-                <button className="w-12 h-full hover:bg-gray-100 transition-colors">
+              <td className="w-16 h-24 border bg-muted text-center text-sm text-muted-foreground">
+                <button className="w-12 h-full hover:bg-accent transition-colors">
                   {rowIndex + 1}
                 </button>
               </td>

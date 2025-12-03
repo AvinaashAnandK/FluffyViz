@@ -9,6 +9,20 @@ export interface TemplateVariable {
   default?: string
 }
 
+export interface PromptConfigOutputSchema {
+  mode: 'text' | 'structured'
+  fields: {
+    id: string
+    name: string
+    type: string
+    description?: string
+    required: boolean
+    enumOptions?: string[]
+    minItems?: number
+    maxItems?: number
+  }[]
+}
+
 export interface PromptConfig {
   category: string
   title: string
@@ -19,6 +33,7 @@ export interface PromptConfig {
   }
   template_variables: TemplateVariable[]
   response_format: string
+  output_schema?: PromptConfigOutputSchema
   inference_config: {
     generation: {
       max_new_tokens: number
@@ -181,15 +196,6 @@ export async function loadPromptConfig(templateId: string): Promise<PromptConfig
 }
 
 /**
- * Load a prompt template string from YAML file
- * @deprecated Use loadPromptConfig instead for full configuration
- */
-export async function loadPromptTemplate(templateId: string): Promise<string> {
-  const config = await loadPromptConfig(templateId)
-  return config.prompt_params.prompt_template
-}
-
-/**
  * Get all templates grouped by category with headings
  */
 export function getTemplateGroups(): TemplateGroup[] {
@@ -205,10 +211,6 @@ export function getTemplateGroups(): TemplateGroup[] {
     {
       heading: 'Single Column Custom Augmentations',
       templates: Object.values(COLUMN_TEMPLATES).filter(t => t.category === 'single-column-custom')
-    },
-    {
-      heading: 'Multi Column Custom Augmentations',
-      templates: Object.values(COLUMN_TEMPLATES).filter(t => t.category === 'multi-column-custom')
     }
   ]
 }
