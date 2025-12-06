@@ -16,6 +16,7 @@ export {
   getFileRowCount,
   updateCellValue,
   addColumn,
+  removeColumn,
   batchUpdateColumn,
   deleteFileTable,
   getTableColumns,

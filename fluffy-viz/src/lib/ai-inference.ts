@@ -1,4 +1,4 @@
-import { generateText, embed, embedMany } from 'ai'
+import { generateText, generateObject, embed, embedMany } from 'ai'
 import { createOpenAI } from '@ai-sdk/openai'
 import { createAnthropic } from '@ai-sdk/anthropic'
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
@@ -9,6 +9,8 @@ import { HfInference } from '@huggingface/inference'
 import type { ProviderKey } from '@/config/provider-settings'
 import { Model, ModelProvider } from '@/types/models'
 import type { FailureType } from '@/lib/duckdb'
+import type { OutputSchema } from '@/types/structured-output'
+import { buildZodSchema, generateSchemaPromptSuffix, parseJSONFromResponse, validateStructuredOutput } from '@/lib/schema-utils'
 
 export interface InferenceOptions {
   model: Model
@@ -20,6 +22,17 @@ export interface InferenceOptions {
 
 export interface InferenceResult {
   content: string
+  error?: string
+  errorType?: FailureType
+}
+
+export interface StructuredInferenceOptions extends InferenceOptions {
+  outputSchema: OutputSchema
+}
+
+export interface StructuredInferenceResult {
+  content: string  // JSON stringified result
+  data?: any       // Parsed and validated data
   error?: string
   errorType?: FailureType
 }
@@ -277,6 +290,101 @@ export async function generateCompletion(
 }
 
 /**
+ * Generate structured output using AI SDK's generateObject
+ */
+export async function generateStructuredCompletion(
+  options: StructuredInferenceOptions
+): Promise<StructuredInferenceResult> {
+  const { provider, model, prompt, outputSchema, temperature = 0.7 } = options
+
+  try {
+    // Validate API key is present
+    if (!provider.apiKey) {
+      throw new Error(`API key missing for provider: ${provider.id}`)
+    }
+
+    // Build Zod schema from field definitions
+    const zodSchema = buildZodSchema(outputSchema.fields)
+
+    // Append schema format to prompt
+    const promptWithSchema = prompt + generateSchemaPromptSuffix(outputSchema.fields)
+
+    console.log('[AI Inference] Starting structured generation:', {
+      providerId: provider.id,
+      modelId: model.id,
+      fieldCount: outputSchema.fields.length
+    })
+
+    // HuggingFace doesn't support generateObject well, use text generation + parsing
+    if (provider.id === 'huggingface') {
+      const textResult = await generateHuggingFaceCompletion({
+        ...options,
+        prompt: promptWithSchema
+      })
+
+      if (textResult.error) {
+        return {
+          content: '',
+          error: textResult.error,
+          errorType: textResult.errorType
+        }
+      }
+
+      // Parse and validate the JSON response
+      const parseResult = parseJSONFromResponse(textResult.content)
+      if (!parseResult.success) {
+        return {
+          content: textResult.content,
+          error: parseResult.error,
+          errorType: 'invalid_request'
+        }
+      }
+
+      const validationResult = validateStructuredOutput(parseResult.data, zodSchema)
+      if (!validationResult.success) {
+        return {
+          content: textResult.content,
+          error: `Validation failed: ${validationResult.error}`,
+          errorType: 'invalid_request'
+        }
+      }
+
+      return {
+        content: JSON.stringify(validationResult.data),
+        data: validationResult.data
+      }
+    }
+
+    // Use AI SDK generateObject for major providers
+    const aiModel = getAISDKModel(
+      provider.id as ProviderKey,
+      model.id,
+      provider.apiKey
+    )
+
+    const { object } = await generateObject({
+      model: aiModel,
+      schema: zodSchema,
+      prompt: promptWithSchema,
+      temperature
+    })
+
+    return {
+      content: JSON.stringify(object),
+      data: object
+    }
+  } catch (error) {
+    console.error('Structured AI inference error:', error)
+    const errorType = classifyError(error)
+    return {
+      content: '',
+      error: error instanceof Error ? error.message : 'Unknown error',
+      errorType
+    }
+  }
+}
+
+/**
  * Embeddings - unified interface for all providers
  */
 export async function generateEmbeddings(
@@ -348,7 +456,8 @@ export async function generateColumnData(
   provider: ModelProvider,
   referenceColumns: string[],
   onProgress?: (current: number, total: number) => void,
-  onCellComplete?: (rowIndex: number, result: InferenceResult) => void
+  onCellComplete?: (rowIndex: number, result: InferenceResult) => void,
+  outputSchema?: OutputSchema
 ): Promise<Map<number, InferenceResult>> {
   try {
     // Call the server-side API endpoint for batch generation
@@ -364,6 +473,7 @@ export async function generateColumnData(
         rows,
         temperature: 0.7,
         maxTokens: 500,
+        outputSchema: outputSchema?.mode === 'structured' ? outputSchema : undefined,
       }),
     })
 

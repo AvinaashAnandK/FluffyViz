@@ -75,6 +75,7 @@ export async function initializeSchema(): Promise<void> {
         provider TEXT,
         prompt TEXT,
         created_at BIGINT,
+        output_schema TEXT,
         PRIMARY KEY (file_id, column_id)
       )
     `);
@@ -94,8 +95,19 @@ export async function initializeSchema(): Promise<void> {
         // Column doesn't exist, add it
         await executeQuery(`ALTER TABLE column_metadata ADD COLUMN column_name TEXT`);
         console.log('[DuckDB Schema] ✓ Column name migration completed');
-      } else {
-        console.log('[DuckDB Schema] Column name already exists, migration skipped');
+      }
+
+      // Migration: Add output_schema if it doesn't exist
+      const outputSchemaColumns = await executeQuery<{ column_name: string }>(`
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = 'column_metadata'
+          AND column_name = 'output_schema'
+      `);
+
+      if (outputSchemaColumns.length === 0) {
+        await executeQuery(`ALTER TABLE column_metadata ADD COLUMN output_schema TEXT`);
+        console.log('[DuckDB Schema] ✓ Output schema migration completed');
       }
     } catch (error: any) {
       console.error('[DuckDB Schema] Column name migration error:', error);
@@ -113,6 +125,7 @@ export async function initializeSchema(): Promise<void> {
             provider TEXT,
             prompt TEXT,
             created_at BIGINT,
+            output_schema TEXT,
             PRIMARY KEY (file_id, column_id)
           )
         `);

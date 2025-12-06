@@ -2,6 +2,8 @@
  * TypeScript type definitions for DuckDB operations
  */
 
+import type { OutputSchema } from '@/types/structured-output'
+
 /**
  * File metadata stored in the 'files' table
  */
@@ -117,6 +119,7 @@ export interface ColumnMetadata {
   provider?: string;
   prompt?: string;
   createdAt?: number;
+  outputSchema?: OutputSchema;  // Schema for structured output
 }
 
 /**

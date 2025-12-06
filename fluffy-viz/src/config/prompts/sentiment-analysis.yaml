@@ -26,7 +26,25 @@ template_variables:
     tooltip: "Text for sentiment analysis"
     required: true
 
-response_format: TEXT
+response_format: STRUCTURED
+
+output_schema:
+  mode: structured
+  fields:
+    - id: "sentiment"
+      name: "sentiment"
+      type: "enum"
+      description: "The overall sentiment classification"
+      required: true
+      enumOptions:
+        - "Positive"
+        - "Negative"
+        - "Neutral"
+    - id: "explanation"
+      name: "explanation"
+      type: "string"
+      description: "Brief explanation for the sentiment classification"
+      required: true
 
 inference_config:
   generation:

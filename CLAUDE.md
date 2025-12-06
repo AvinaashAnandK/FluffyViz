@@ -4,11 +4,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**FluffyViz** is a local-first web application for AI/ML engineers to transform raw AI agent conversation logs into actionable spreadsheet data with AI-powered augmentation. The workflow is: **Upload → Augment → Visualize**.
+**FluffyViz** is a local-first web application for AI/ML engineers to transform raw AI agent conversation logs into actionable spreadsheet data with AI-powered augmentation. The workflow is: **Parse → Augment → Visualize**.
 
-- **Tech Stack**: Next.js 14 (App Router), React 19, TypeScript (strict), Tailwind CSS v4, IndexedDB
+```
+Agent Traces → Tabular Format → AI Columns (LLM-as-Judge) → Embedding Atlas (2D UMAP)
+```
+
+- **Tech Stack**: Next.js 15 (App Router), React 19, TypeScript (strict), Tailwind CSS v4
+- **Storage**: DuckDB WASM (browser-based SQL) + IndexedDB persistence
 - **UI Library**: shadcn/ui (Radix primitives)
-- **Architecture**: Client-side only, no backend—all data processing in browser
+- **Visualization**: Apple's Embedding Atlas for 2D embedding exploration
+- **Architecture**: Client-side first, API routes for AI inference only
 
 ## Development Commands
 
@@ -50,22 +56,25 @@ npm test -- --coverage
 User uploads file
   → FormatDetector auto-detects format (JSONL/JSON/CSV/agent formats)
   → parseFileContent() flattens nested objects with dot notation
-  → useFileStorage hook saves to IndexedDB with optimistic concurrency
+  → saveFileToDuckDB() stores in DuckDB WASM table
   → Navigate to /edit/[fileId]
-  → SpreadsheetEditor renders data with SpreadsheetTable
+  → SpreadsheetEditor renders via DuckDB queries (pagination, sorting, filtering)
   → User adds AI column via AddColumnModal
-  → generateColumnData() creates new column (currently mock, needs real API)
-  → Auto-save updates IndexedDB
+  → API route /api/generate-column calls LLM provider (OpenAI, Anthropic, etc.)
+  → Results stored in DuckDB with cell-level metadata (status, errors)
+  → Embedding Wizard → UMAP projection → Embedding Atlas visualization
 ```
 
 ### Key Architectural Patterns
 
-#### 1. **Local-First Storage (useFileStorage hook)**
-- All files stored in IndexedDB (50MB limit)
-- Optimistic concurrency control with version tracking
-- Operation queue prevents race conditions
-- Cross-tab synchronization via CustomEvents
-- Location: `src/hooks/use-file-storage.ts`
+#### 1. **DuckDB WASM Storage Layer**
+- All data stored in browser-based DuckDB (`src/lib/duckdb/`)
+- Tables: `file_data_{fileId}` for each uploaded file
+- Metadata tables: `column_metadata`, `cell_metadata` for AI column state
+- Operations: `src/lib/duckdb/operations.ts` - CRUD, batch updates, queries
+- File storage: `src/lib/duckdb/file-storage.ts` - upload, list, delete files
+- Schema versioning: `src/lib/duckdb/schema.ts`
+- **50MB file size limit**, 30MB warning threshold
 
 #### 2. **Multi-Format Data Parsing**
 The system handles 5 agent data formats through a two-layer architecture:
@@ -87,28 +96,35 @@ The `flattenObject()` function converts nested data to spreadsheet columns using
 
 **Configuration**: `src/config/parser.config.ts` (maxFlattenDepth: 10, maxArrayLength: 1000)
 
-#### 3. **AI Column Generation (Current State: Mock)**
+#### 3. **AI Column Generation**
 - Templates defined in `src/config/ai-column-templates.ts`
-- YAML prompt files in `/public/prompts/`
-- Model selection via HuggingFace API integration (`src/lib/models.ts`)
-- Provider configuration in `src/lib/providers.ts` (OpenAI, Anthropic, Groq, Together AI, Novita, Cohere)
-- **⚠️ CRITICAL**: `src/lib/ai-inference.ts` returns mock data—real API integration needed
+- YAML prompt files in `src/config/prompts/*.yaml`
+- Provider configuration: `src/config/provider-settings.ts` (OpenAI, Anthropic, Groq, Together, Novita, Cohere, Google, Mistral)
+- API route: `src/app/api/generate-column/route.ts` - batch processing with provider-specific batch sizes
+- Inference: `src/lib/ai-inference.ts` - supports text and structured output modes
+- Model registry: `src/lib/model-registry-server.ts` - cached model definitions
+- **Cell metadata tracks**: status (pending/succeeded/failed/edited), errors, original values
 
-#### 4. **Component Structure**
+#### 4. **Embedding Visualization**
+- Wizard: `src/components/embedding-viewer/embedding-wizard.tsx` - column selection, embedding configuration
+- Visualization: `src/components/embedding-viewer/embedding-visualization.tsx` - Apple's Embedding Atlas
+- Supports: single column, multi-column concatenation, conversational history aggregation
+
+#### 5. **Component Structure**
 ```
 App Layout (src/app/layout.tsx)
 ├── ThemeProvider (next-themes)
 ├── SidebarProvider
-│   ├── AppSidebar (file management, uses useFileStorage)
+│   ├── AppSidebar (file management)
 │   └── Main Content
 │       ├── Home (src/app/page.tsx)
 │       │   └── EnhancedUpload (drag-drop, format detection)
 │       └── Edit Page (src/app/edit/[fileId]/page.tsx)
 │           └── SpreadsheetEditor
-│               ├── SpreadsheetTable (editable cells)
-│               └── AddColumnModal (side drawer)
-│                   ├── ModelSelector (HuggingFace search)
-│                   └── ProviderSelector (compatibility filtering)
+│               ├── SpreadsheetTable (pagination, sorting, filtering, editable cells)
+│               ├── AddColumnModal (template selection, prompt composer, schema builder)
+│               ├── RetryModal (few-shot learning from edits, scope selection)
+│               └── EmbeddingViewer (wizard → atlas visualization)
 ```
 
 ### Important Implementation Details
@@ -129,21 +145,15 @@ import { useFileStorage } from '@/hooks/use-file-storage';
 #### Template System
 AI column templates use YAML files loaded via API route:
 - Config: `src/config/ai-column-templates.ts`
-- YAML files: `/public/prompts/{templateId}.yaml`
+- YAML files: `src/config/prompts/{templateId}.yaml`
 - API: `src/app/api/prompts/[templateId]/route.ts`
-- Interpolation: `{{column_name}}` syntax for runtime replacement
+- Interpolation: `{{column_id}}` syntax for runtime replacement
 
-#### Prompt Editor (In Development)
-**Location**: See `ProjectDetails/PromptEditorRevamp/tech-plan.md`
-
-The new prompt editor will use:
-- **TipTap** rich text editor with custom "variable pill" nodes
-- **@ trigger** for column references (e.g., type `@` → select column → inserts pill)
-- Pills show column name + first-row preview in combobox
-- Validation warns about unmapped variables
-- Preview accordion shows final `{{column_slug}}` syntax
-
-**Integration point**: Replaces textarea in `AddColumnModal.tsx`
+#### Prompt Composer
+- Location: `src/components/spreadsheet/PromptComposer.tsx`
+- Uses `@` trigger for column references (variable pills)
+- Schema builder for structured output (JSON schema generation)
+- Preview accordion shows interpolated prompt
 
 ## Testing Strategy
 
@@ -180,9 +190,12 @@ When adding features, write tests BEFORE implementation:
 - Consider using Web Workers for files >5MB (not yet implemented)
 - Configuration limits in `parser.config.ts` prevent runaway flattening
 
-### AI Inference Not Working
-**Problem**: `generateColumnData()` returns placeholder text
-**Solution**: This is expected—mock implementation. Real API integration is the #1 priority (see `ProjectDetails/ClaudeOct5/files-requiring-changes.md`)
+### AI Inference Errors
+**Problem**: Column generation fails with API errors
+**Solution**:
+- Check provider API key in environment variables (e.g., `OPENAI_API_KEY`)
+- Check `src/config/provider-settings.ts` for provider configuration
+- Batch size is configurable per provider (default: 5)
 
 ### Column Dropdown Not Showing Data
 **Problem**: Empty column list in AddColumnModal
@@ -217,28 +230,27 @@ If adding support for new agent data formats:
 **Project docs location**: `ProjectDetails/`
 
 Key docs:
-- `FluffyVizOverview.md` - High-level product vision
-- `ClaudeOct5/ProductOverview-Technical.md` - Complete file inventory (53 files)
-- `ClaudeOct5/files-requiring-changes.md` - Prioritized implementation roadmap
-- `PromptEditorRevamp/tech-plan.md` - Rich text prompt editor spec
+- `2025-12-02/feature-enhancements.md` - Current roadmap and priorities
+- `2025-12-02/codebase-audit.md` - Known issues and technical debt
+- `ClaudeOct5/ProductOverview-Technical.md` - Complete file inventory
 
 **Sample data**: `/public/sample-*.{json,jsonl,csv}` - Use for testing parsers
 
-## Current Priorities (as of Oct 2025)
+## Current Priorities (as of Dec 2025)
 
-See `ProjectDetails/ClaudeOct5/files-requiring-changes.md` for full roadmap.
+See `ProjectDetails/2025-12-02/feature-enhancements.md` for full roadmap.
 
-**Immediate (High Priority)**:
-1. Implement real AI inference in `src/lib/ai-inference.ts`
-2. Add API key management (environment variables + secure storage)
-3. Migrate YAML templates to enhanced format with pill metadata
-4. Build TipTap-based PromptComposer to replace AddColumnModal textarea
+**P0 - Core Features**:
+1. Embedding Atlas deep integration (pass all columns, hover/color config, search)
+2. LLM-as-a-Judge column templates (quality scores, failure modes, intent classification)
 
-**Next Phase (Medium Priority)**:
-1. Refactor overlap between `data-processor.ts` and `format-parser.ts`
-2. Replace TypeScript `any` types with proper definitions
-3. Add comprehensive error handling for network failures
-4. Expand test coverage (integration + E2E)
+**P1 - Export & Polish**:
+1. Export functionality (CSV, JSON, Parquet)
+2. Single-cell retry with few-shot learning
+
+**P2 - Quality of Life**:
+1. HuggingFace model search improvements (caching, better UX)
+2. Parser cache management for large datasets
 
 ## Git Workflow
 
@@ -257,16 +269,15 @@ Co-Authored-By: Claude <noreply@anthropic.com>
 **Types**: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
 
 ### Branch Strategy
-Current branch: `ai-sheets-integration-claude`
-Main branch: (not specified—check with user before creating PRs)
+Main branch: `main`
 
 ## Performance Considerations
 
 ### Large Dataset Handling
-- **Current limit**: 50MB file size in IndexedDB
-- **Parser**: Memoization for repeated operations
-- **Rendering**: No virtual scrolling yet—may struggle with 10k+ rows
-- **Future**: Consider Web Workers for parsing, virtual scrolling for table
+- **Current limit**: 50MB file size in DuckDB
+- **Parser**: Memoization with LRU cache (100 items), `clearParserCache()` available
+- **Rendering**: Server-side pagination via DuckDB queries (100 rows default)
+- **Sorting/Filtering**: Handled by DuckDB, not in-memory
 
 ### Optimization Checklist
 When adding features that process data:
@@ -284,11 +295,11 @@ When adding features that process data:
 - No auth required for public models
 - Rate limits: Unknown—add caching if issues arise
 
-### Embedding Atlas (Future)
-Export integration planned but not implemented. When adding:
-- Research Atlas input format requirements
-- Add export button to SpreadsheetEditor toolbar
-- Implement data transformation in new `src/lib/atlas-export.ts`
+### Embedding Atlas
+- Already integrated via `embedding-atlas` npm package
+- Uses Mosaic Framework for coordinated views
+- Provides: scatter plot, table view, point details, density clustering
+- See `src/components/embedding-viewer/` for implementation
 
 ## When Stuck
 
@@ -305,3 +316,12 @@ Export integration planned but not implemented. When adding:
 - **Component composition**: Small, focused components over monoliths
 - **Progressive enhancement**: Core features work without AI API (upload/view/edit)
 - **Performance-conscious**: Memoization, operation queues, size limits throughout
+
+## Maintaining This Document
+
+**Update CLAUDE.md after significant changes:**
+- New architectural patterns or data flows
+- New key files or directories
+- Changed priorities or roadmap
+- New common pitfalls discovered
+- Integration with new external tools/APIs

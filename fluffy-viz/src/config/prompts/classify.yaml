@@ -10,13 +10,10 @@ prompt_params:
     1. Carefully read and understand the text
     2. Consider all available categories
     3. Choose the most appropriate single category
-    4. Provide only the category name without additional explanation
-    5. Be consistent in your classification logic
+    4. Be consistent in your classification logic
 
   prompt_template: |
     Classify the following text into one of these categories: {{categories}}
-
-    Provide only the category name without additional explanation.
 
     Text to classify:
     {{input}}
@@ -34,7 +31,21 @@ template_variables:
     required: false
     default: "General, Technical, Support"
 
-response_format: TEXT
+response_format: STRUCTURED
+
+output_schema:
+  mode: structured
+  fields:
+    - id: "category"
+      name: "category"
+      type: "string"
+      description: "The selected category from the provided list"
+      required: true
+    - id: "confidence"
+      name: "confidence"
+      type: "number"
+      description: "Confidence score between 0 and 1"
+      required: false
 
 inference_config:
   generation:

@@ -26,7 +26,23 @@ template_variables:
     tooltip: "Text that will be summarized"
     required: true
 
-response_format: TEXT
+response_format: STRUCTURED
+
+output_schema:
+  mode: structured
+  fields:
+    - id: "summary"
+      name: "summary"
+      type: "string"
+      description: "Concise summary capturing essential meaning and key points"
+      required: true
+    - id: "key_points"
+      name: "key_points"
+      type: "array_string"
+      description: "List of main points extracted from the text"
+      required: false
+      minItems: 1
+      maxItems: 5
 
 inference_config:
   generation:

@@ -11,7 +11,6 @@ prompt_params:
     2. Avoid common stop words (the, a, an, is, etc.)
     3. Focus on nouns, proper nouns, and important phrases
     4. Extract 3-10 keywords depending on text length
-    5. Return as a comma-separated string
 
   prompt_template: |
     Identify and extract the most important keywords or key phrases from the following text.
@@ -26,7 +25,18 @@ template_variables:
     tooltip: "Text to extract keywords from"
     required: true
 
-response_format: TEXT
+response_format: STRUCTURED
+
+output_schema:
+  mode: structured
+  fields:
+    - id: "keywords"
+      name: "keywords"
+      type: "array_string"
+      description: "List of extracted keywords and key phrases"
+      required: true
+      minItems: 3
+      maxItems: 10
 
 inference_config:
   generation:

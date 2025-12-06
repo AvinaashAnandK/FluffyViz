@@ -15,6 +15,12 @@ import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { ArrowLeft, Download, Save, Loader2, X, ArrowUpDown, Filter, Plus } from 'lucide-react'
 import { generateColumnData } from '@/lib/ai-inference'
+import type { OutputSchema } from '@/types/structured-output'
+import {
+  extractFieldValues,
+  generateExpandedColumnNames,
+  parseJSONFromResponse
+} from '@/lib/schema-utils'
 import {
   isConversationalHistoryPrompt,
   parseConversationalHistoryConfig,
@@ -31,9 +37,13 @@ import {
   batchSaveCellMetadata,
   getColumnCellMetadata,
   persistDatabase,
+  removeColumn,
+  deleteColumnMetadata,
+  deleteColumnCellMetadata,
   type CellMetadata
 } from '@/lib/duckdb'
 import { selectFewShotExamples, buildFewShotPrompt } from '@/lib/few-shot-sampling'
+import { extractColumnReferences } from '@/lib/prompt-utils'
 import { toast } from 'sonner'
 import Papa from 'papaparse'
 import {
@@ -55,11 +65,13 @@ export interface Column {
   prompt?: string
   searchWeb?: boolean
   isAIGenerated?: boolean
+  outputSchema?: OutputSchema
   metadata?: {
     prompt?: string
     provider?: string
     model?: string
     createdAt?: Date
+    outputSchema?: OutputSchema
   }
 }
 
@@ -208,10 +220,12 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
                   visible: true,
                   columnType: meta?.columnType,
                   isAIGenerated: meta?.columnType === 'ai-generated',
+                  outputSchema: meta?.outputSchema as OutputSchema | undefined,
                   metadata: meta ? {
                     prompt: meta.prompt,
                     provider: meta.provider,
                     model: meta.model,
+                    outputSchema: meta.outputSchema,
                   } : undefined
                 }
               })
@@ -235,6 +249,7 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
                       prompt: meta.prompt,
                       provider: meta.provider,
                       model: meta.model,
+                      outputSchema: meta.outputSchema,
                     } : undefined
                   }
                 })
@@ -292,6 +307,7 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
     model: Model
     provider: ModelProvider
     searchWeb?: boolean
+    outputSchema?: OutputSchema
   }) => {
     // Check for duplicate column name
     const existingColumnMeta = await getAllColumnMetadata(fileId)
@@ -319,11 +335,13 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
       provider: columnData.provider,
       prompt: columnData.prompt,
       searchWeb: columnData.searchWeb,
+      outputSchema: columnData.outputSchema,
       metadata: {
         prompt: columnData.prompt,
         provider: columnData.provider.id,
         model: columnData.model.id,
-        createdAt: new Date()
+        createdAt: new Date(),
+        outputSchema: columnData.outputSchema
       }
     }
 
@@ -353,7 +371,8 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
         model: isConvHistory ? undefined : columnData.model.id,
         provider: isConvHistory ? undefined : columnData.provider.id,
         prompt: columnData.prompt,
-        createdAt: Date.now()
+        createdAt: Date.now(),
+        outputSchema: columnData.outputSchema
       })
       console.log(`[SpreadsheetEditor] Column metadata saved for ${newColumn.id}`)
 
@@ -371,6 +390,133 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
     generateAIColumnData(newColumn, columnData)
   }
 
+  /**
+   * Expand structured JSON column into separate columns for each field
+   */
+  const expandStructuredColumns = async (
+    jsonColumn: Column,
+    outputSchema: OutputSchema,
+    generatedValues: Array<{ rowIndex: number; value: string }>
+  ) => {
+    const { fields, expansionMode } = outputSchema
+
+    if (!fields || fields.length === 0) return
+
+    try {
+      console.log(`[SpreadsheetEditor] Expanding structured column ${jsonColumn.id} into ${fields.length} field columns`)
+
+      // Generate column names: {baseName}_{fieldName}
+      const expandedColumnNames = generateExpandedColumnNames(jsonColumn.name, fields)
+
+      // Create field columns in DuckDB
+      const fieldColumns: Column[] = []
+      for (const field of fields) {
+        const fieldColumnName = expandedColumnNames[field.name]
+        const fieldColumnId = `${jsonColumn.id}_${field.name}`
+
+        // Determine DuckDB column type based on field type
+        let duckDbType = 'TEXT'
+        switch (field.type) {
+          case 'number':
+            duckDbType = 'DOUBLE'
+            break
+          case 'boolean':
+            duckDbType = 'BOOLEAN'
+            break
+          case 'array_string':
+          case 'array_number':
+          case 'array_object':
+          case 'object':
+            duckDbType = 'JSON' // Use JSON type for arrays and objects
+            break
+          default:
+            duckDbType = 'TEXT'
+        }
+
+        // Add column to DuckDB with appropriate type
+        await addColumnToDuckDB(fileId, fieldColumnId, duckDbType, null)
+
+        // Create column object
+        const fieldColumn: Column = {
+          id: fieldColumnId,
+          name: fieldColumnName,
+          type: 'string', // Will contain formatted values
+          model: jsonColumn.model,
+          provider: jsonColumn.provider
+        }
+
+        fieldColumns.push(fieldColumn)
+      }
+
+      // Parse JSON and extract field values for each row
+      const fieldUpdates = new Map<string, Array<{ rowIndex: number; value: any }>>()
+      fields.forEach(field => {
+        fieldUpdates.set(field.name, [])
+      })
+
+      generatedValues.forEach(({ rowIndex, value }) => {
+        // Parse JSON from the generated value
+        const parseResult = parseJSONFromResponse(value)
+
+        if (parseResult.success) {
+          // Extract field values
+          const fieldValues = extractFieldValues(parseResult.data, fields)
+
+          // Add to update arrays
+          fields.forEach(field => {
+            const updates = fieldUpdates.get(field.name)!
+            updates.push({
+              rowIndex,
+              value: fieldValues[field.name]
+            })
+          })
+        } else {
+          console.error(`[SpreadsheetEditor] Failed to parse JSON for row ${rowIndex}:`, parseResult.error)
+          // Add nulls for failed rows
+          fields.forEach(field => {
+            const updates = fieldUpdates.get(field.name)!
+            updates.push({ rowIndex, value: null })
+          })
+        }
+      })
+
+      // Batch update each field column
+      for (const field of fields) {
+        const fieldColumnId = `${jsonColumn.id}_${field.name}`
+        const updates = fieldUpdates.get(field.name)!
+
+        if (updates.length > 0) {
+          await batchUpdateColumn(fileId, fieldColumnId, updates)
+          console.log(`[SpreadsheetEditor] Field column ${fieldColumnId} updated with ${updates.length} values`)
+        }
+      }
+
+      // Update in-memory columns state
+      setColumns(prev => [...prev, ...fieldColumns])
+
+      // Reload data to reflect new columns
+      await loadFileData(fileId, {
+        offset: currentPage * rowsPerPage,
+        limit: rowsPerPage,
+        filters: currentFilters,
+        sortBy: currentSort?.columnId,
+        sortOrder: currentSort?.order
+      })
+
+      // If expansionMode is 'expanded' (not 'both'), remove the JSON column
+      if (expansionMode === 'expanded') {
+        console.log(`[SpreadsheetEditor] Removing JSON column ${jsonColumn.id} (expansion mode: expanded)`)
+        // Remove from DuckDB (this will cascade to data)
+        // Note: We don't have a removeColumn function yet, so just hide it from UI
+        setColumns(prev => prev.filter(c => c.id !== jsonColumn.id))
+      }
+
+      console.log(`[SpreadsheetEditor] Column expansion complete`)
+    } catch (error) {
+      console.error('[SpreadsheetEditor] Failed to expand structured columns:', error)
+    }
+  }
+
   const generateAIColumnData = async (
     column: Column,
     columnData: {
@@ -379,6 +525,7 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
       model: Model
       provider: ModelProvider
       searchWeb?: boolean
+      outputSchema?: OutputSchema
     }
   ) => {
     setGeneratingColumn(column.id)
@@ -500,7 +647,8 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
             next.delete(`${rowIndex}-${column.id}`)
             return next
           })
-        }
+        },
+        columnData.outputSchema
       )
 
       // Persist to DuckDB after all generation is complete
@@ -515,6 +663,11 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
           // Persist database after batch update and metadata saves
           await persistDatabase()
           console.log(`[SpreadsheetEditor] Database persisted after AI column generation`)
+
+          // Handle column expansion for structured output
+          if (columnData.outputSchema?.mode === 'structured' && columnData.outputSchema.expansionMode !== 'single') {
+            await expandStructuredColumns(column, columnData.outputSchema, generatedValues)
+          }
         } catch (error) {
           console.error('[SpreadsheetEditor] Failed to persist AI column data to DuckDB:', error)
         }
@@ -527,12 +680,6 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
       setGeneratingColumn(null)
       setGenerationProgress({ current: 0, total: 0 })
     }
-  }
-
-  const extractColumnReferences = (prompt: string): string[] => {
-    const matches = prompt.match(/\{\{([^}]+)\}\}/g)
-    if (!matches) return []
-    return matches.map(m => m.replace(/\{\{|\}\}/g, '').trim())
   }
 
   const updateCellValue = async (rowIndex: number, columnId: string, value: any) => {
@@ -614,6 +761,43 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
       console.log(`[SpreadsheetEditor] Cell [${dbRowIndex}, ${columnId}] updated and database persisted`)
     } catch (error) {
       console.error('[SpreadsheetEditor] Failed to update cell in DuckDB:', error)
+    }
+  }
+
+  const handleDeleteColumn = async (columnId: string) => {
+    const column = columns.find(c => c.id === columnId)
+    if (!column) return
+
+    try {
+      // Remove column from DuckDB table
+      await removeColumn(fileId, columnId)
+      console.log(`[SpreadsheetEditor] Column ${columnId} removed from DuckDB`)
+
+      // Delete column metadata
+      await deleteColumnMetadata(fileId, columnId)
+      console.log(`[SpreadsheetEditor] Column metadata deleted for ${columnId}`)
+
+      // Delete all cell metadata for this column
+      await deleteColumnCellMetadata(fileId, columnId)
+      console.log(`[SpreadsheetEditor] Cell metadata deleted for column ${columnId}`)
+
+      // Update in-memory columns state (remove from array)
+      setColumns(prev => prev.filter(c => c.id !== columnId))
+
+      // Update in-memory data (remove column from each row)
+      setData(prev => prev.map(row => {
+        const { [columnId]: _, [`${columnId}__meta`]: __, ...rest } = row
+        return rest
+      }))
+
+      // Persist database
+      await persistDatabase()
+      console.log(`[SpreadsheetEditor] Database persisted after column deletion`)
+
+      toast.success(`Column "${column.name}" deleted successfully`)
+    } catch (error) {
+      console.error('[SpreadsheetEditor] Failed to delete column:', error)
+      toast.error(`Failed to delete column "${column.name}"`)
     }
   }
 
@@ -801,8 +985,18 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
 
       // Generate data with callback for each cell
       const columnRefs = extractColumnReferences(promptWithExamples)
-      const modelToUse = options.model || column.model!
-      const providerToUse = options.provider || column.provider!
+
+      // Ensure we have model and provider - prioritize options, then column
+      let modelToUse: Model | undefined = options.model || column.model
+      let providerToUse: ModelProvider | undefined = options.provider || column.provider
+
+      // If still undefined, show error
+      if (!modelToUse || !providerToUse) {
+        toast.error('Please select a model and provider to retry generation.')
+        setLoadingCells(new Set())
+        setIsRetryModalOpen(false)
+        return
+      }
 
       // If model changed, update column metadata
       if (options.model && options.provider) {
@@ -879,7 +1073,8 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
             next.delete(`${rowIndex}-${columnId}`)
             return next
           })
-        }
+        },
+        column.outputSchema
       )
 
       // Success toast
@@ -1254,6 +1449,7 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
                   onSort={handleSort}
                   columnStats={columnStats}
                   onOpenRetryModal={handleOpenRetryModal}
+                  onDeleteColumn={handleDeleteColumn}
                 />
               </CardContent>
 

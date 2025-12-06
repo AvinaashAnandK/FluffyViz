@@ -32,7 +32,16 @@ template_variables:
     required: false
     default: "English"
 
-response_format: TEXT
+response_format: STRUCTURED
+
+output_schema:
+  mode: structured
+  fields:
+    - id: "translation"
+      name: "translation"
+      type: "string"
+      description: "The translated text in the target language"
+      required: true
 
 inference_config:
   generation:

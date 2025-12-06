@@ -49,6 +49,7 @@ The augmented columns (especially **LLM-as-a-judge evaluations**) become the dim
 3. [Export Functionality](#3-export-functionality)
 4. [Single-Cell Retry](#4-single-cell-retry)
 5. [HuggingFace Integration Improvements](#5-huggingface-integration-improvements)
+6. [Web Search Augmentation](#6-web-search-augmentation) ⭐ New Feature
 
 ---
 
@@ -828,6 +829,557 @@ Reference the [HuggingFace AI Sheets](https://github.com/huggingface/aisheets) i
 
 ---
 
+## 6. Web Search Augmentation
+
+### Overview
+
+Enable LLM-generated columns to access real-time web information when answering questions. This is critical for use cases where agent conversations reference current events, product information, or data that changes frequently.
+
+**Inspiration:** [HuggingFace AI Sheets](https://github.com/huggingface/aisheets) uses Serper API for web search.
+
+### Use Cases for Agent Trace Analysis
+
+| Scenario | Why Web Search Helps |
+|----------|---------------------|
+| Fact-checking agent claims | Verify if agent provided accurate current information |
+| Competitor analysis | Look up products/services mentioned in conversations |
+| News-related queries | Ground evaluations in current events context |
+| Documentation lookups | Check if agent cited correct docs/APIs |
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        Web Search Integration                                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│   LLM Provider                    Search Provider (Tool)                     │
+│   ┌──────────────────┐           ┌──────────────────────┐                   │
+│   │ • OpenAI         │           │ • OpenAI built-in*   │                   │
+│   │ • Anthropic      │ ───────── │ • Serper API         │                   │
+│   │ • Google         │  can use  │ • Tavily API         │                   │
+│   │ • Mistral        │   any     │ • Brave Search API   │                   │
+│   │ • Groq           │           └──────────────────────┘                   │
+│   │ • Perplexity*    │                                                       │
+│   └──────────────────┘                                                       │
+│                                                                              │
+│   * OpenAI Responses API has built-in web_search tool                        │
+│   * Perplexity has native search (no tool needed)                            │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Key Insight:** LLM provider and search provider are independent choices. Any LLM can use any search tool via AI SDK's tool calling.
+
+### Implementation Phases
+
+#### v0: OpenAI Responses API + Perplexity Provider
+
+**Goal:** Enable web search with minimal changes using providers that have built-in search.
+
+##### 6.1 Migrate OpenAI to Responses API
+
+The AI SDK supports OpenAI Responses API natively:
+
+```typescript
+// Before (Chat Completions API)
+import { createOpenAI } from '@ai-sdk/openai'
+const provider = createOpenAI({ apiKey })
+const model = provider('gpt-4o')
+
+// After (Responses API)
+const model = provider.responses('gpt-4o')
+```
+
+**Code Changes in `ai-inference.ts`:**
+
+```typescript
+function getAISDKModel(
+  providerId: ProviderKey,
+  modelId: string,
+  apiKey: string,
+  useWebSearch: boolean = false  // New parameter
+) {
+  switch (providerId) {
+    case 'openai': {
+      const provider = createOpenAI({ apiKey })
+      // Use Responses API when web search is enabled
+      return useWebSearch
+        ? provider.responses(modelId)
+        : provider(modelId)
+    }
+    // ... other providers unchanged
+  }
+}
+```
+
+**Web Search Tool:**
+
+```typescript
+import { openai } from '@ai-sdk/openai'
+
+// When calling generateText with web search
+const { text } = await generateText({
+  model: openai.responses('gpt-4o'),
+  prompt: userPrompt,
+  tools: {
+    web_search: openai.tools.webSearch(),
+  },
+  maxSteps: 3,  // Allow tool use round-trips
+})
+```
+
+##### 6.2 Add Perplexity Provider
+
+Perplexity models have native search—no tool calling needed.
+
+**Install:**
+```bash
+npm install @ai-sdk/perplexity
+```
+
+**Add to `provider-settings.ts`:**
+
+```typescript
+export type ProviderKey =
+  | 'openai'
+  | 'anthropic'
+  // ... existing providers
+  | 'perplexity'  // NEW
+
+export const PROVIDER_META: Record<ProviderKey, ProviderMeta> = {
+  // ... existing providers
+  perplexity: {
+    label: 'Perplexity',
+    freeTier: false,
+    needsApiKey: true,
+    supports: { text: true, embedding: false, mmEmbedding: false },
+  },
+}
+```
+
+**Add to `ai-inference.ts`:**
+
+```typescript
+import { createPerplexity } from '@ai-sdk/perplexity'
+
+case 'perplexity': {
+  const provider = createPerplexity({ apiKey })
+  return provider(modelId)  // e.g., 'sonar', 'sonar-pro'
+}
+```
+
+**Perplexity Models:**
+- `sonar` - Fast, web-grounded responses
+- `sonar-pro` - More capable, better citations
+
+##### 6.2.1 Structured Output + Web Search Compatibility
+
+**Critical Limitation:** `generateObject` does NOT support tools. This is by design in the AI SDK.
+
+When combining **web search + structured output**, use `generateText` with `experimental_output`:
+
+```typescript
+import { generateText, Output } from 'ai'
+import { z } from 'zod'
+
+// ❌ This will NOT work - generateObject doesn't support tools
+const { object } = await generateObject({
+  model: openai.responses('gpt-4o'),
+  schema: mySchema,
+  tools: { web_search: openai.tools.webSearch() },  // Tools ignored!
+  prompt: userPrompt,
+})
+
+// ✅ Correct approach - use generateText with experimental_output
+const { experimental_output } = await generateText({
+  model: openai.responses('gpt-4o'),
+  prompt: userPrompt,
+  tools: {
+    web_search: openai.tools.webSearch(),
+  },
+  maxSteps: 3,
+  experimental_output: Output.object({
+    schema: z.object({
+      score: z.number().describe('Quality score 1-5'),
+      reasoning: z.string().describe('Explanation for the score'),
+      sources_used: z.array(z.string()).describe('URLs referenced'),
+    }),
+  }),
+})
+
+// Result is in experimental_output
+const result = experimental_output
+```
+
+**Implementation in `ai-inference.ts`:**
+
+Three code paths needed:
+
+| Scenario | Function | Notes |
+|----------|----------|-------|
+| Text output (no web search) | `generateText` | Current approach |
+| Structured output (no web search) | `generateObject` | Current approach |
+| Text output + web search | `generateText` + tools | Add tools parameter |
+| **Structured output + web search** | `generateText` + `experimental_output` | **New path** |
+
+```typescript
+// In generateStructuredCompletion()
+if (useWebSearch) {
+  // Use generateText with experimental_output when web search is enabled
+  const { experimental_output } = await generateText({
+    model: aiModel,
+    prompt: promptWithSchema,
+    tools: getWebSearchTools(providerId, searchProvider),
+    maxSteps: 3,
+    experimental_output: Output.object({ schema: zodSchema }),
+  })
+  return { content: JSON.stringify(experimental_output), data: experimental_output }
+} else {
+  // Use generateObject when no web search (current behavior)
+  const { object } = await generateObject({
+    model: aiModel,
+    schema: zodSchema,
+    prompt: promptWithSchema,
+    temperature,
+  })
+  return { content: JSON.stringify(object), data: object }
+}
+```
+
+**Requirements:**
+- AI SDK 4.0.24+ (current: 5.0.60 ✅)
+- `experimental_output` may change in future releases (monitor AI SDK changelog)
+
+**References:**
+- [GitHub Discussion: Tools with generateObject](https://github.com/vercel/ai/discussions/1395)
+- [GitHub Discussion: Structured output with tools](https://github.com/vercel/ai/discussions/3323)
+
+##### 6.3 UI: Web Search Toggle in AddColumnModal
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Add AI Column                                              [X]   │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│ Template: [Custom Prompt ▼]                                      │
+│                                                                  │
+│ Prompt:                                                          │
+│ ┌──────────────────────────────────────────────────────────────┐ │
+│ │ Verify if the agent's claim about @product_name is accurate  │ │
+│ │ based on current information.                                │ │
+│ └──────────────────────────────────────────────────────────────┘ │
+│                                                                  │
+│ ☑ Enable web search                                              │
+│   ℹ️ LLM will search the web for current information             │
+│                                                                  │
+│ Provider: [OpenAI ▼]     Model: [gpt-4o ▼]                       │
+│                                                                  │
+│ ⚠️ Web search adds latency and API costs per row                 │
+│                                                                  │
+│                                   [Cancel]  [Generate Column]    │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Conditional Logic:**
+- When "Enable web search" is checked:
+  - If OpenAI selected → use `openai.responses()` + `webSearch` tool
+  - If Perplexity selected → use native search (no change needed)
+  - If other provider → show message: "Select OpenAI or Perplexity for web search. Search provider configurations coming soon."
+
+##### v0 Effort Estimate
+
+| Task | Hours |
+|------|-------|
+| OpenAI Responses API migration in `ai-inference.ts` | 2 |
+| Add Perplexity provider | 1-2 |
+| `experimental_output` code path for structured + web search | 2-3 |
+| Web search toggle in AddColumnModal | 2 |
+| Conditional provider logic | 1-2 |
+| Update `generate-column` API route | 2 |
+| Testing with sample prompts (text + structured modes) | 2-3 |
+| **Total** | **12-16 hours** |
+
+---
+
+#### v1: External Search Providers as Tools
+
+**Goal:** Allow any LLM to use web search via external APIs (Serper, Tavily, Brave).
+
+##### 6.4 Search Provider Configuration
+
+Add a new tab in the Provider Settings modal:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Settings                                                   [X]   │
+├─────────────────────────────────────────────────────────────────┤
+│ [Model Providers]  [Search Providers]  [Defaults]                │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│ Search Providers                                                 │
+│                                                                  │
+│ ┌─────────────────────────────────────────────────────────────┐ │
+│ │ Serper                                        [Disabled ▼]  │ │
+│ │ API Key: [••••••••••••••••1234]               [Test]        │ │
+│ │ Free tier: 2,500 searches/month                              │ │
+│ └─────────────────────────────────────────────────────────────┘ │
+│                                                                  │
+│ ┌─────────────────────────────────────────────────────────────┐ │
+│ │ Tavily                                        [Enabled ▼]   │ │
+│ │ API Key: [••••••••••••••••5678]               [Test]        │ │
+│ │ Free tier: 1,000 searches/month                              │ │
+│ └─────────────────────────────────────────────────────────────┘ │
+│                                                                  │
+│ ┌─────────────────────────────────────────────────────────────┐ │
+│ │ Brave Search                                  [Disabled ▼]  │ │
+│ │ API Key: [                    ]               [Test]        │ │
+│ │ Free tier: 2,000 searches/month                              │ │
+│ └─────────────────────────────────────────────────────────────┘ │
+│                                                                  │
+│ Default search provider: [Tavily ▼]                              │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Config Schema (`provider-settings.ts`):**
+
+```typescript
+export type SearchProviderKey = 'serper' | 'tavily' | 'brave'
+
+export interface SearchProviderConfig {
+  apiKey: string
+  enabled: boolean
+}
+
+export interface ProviderSettings {
+  version: string
+  providers: Partial<Record<ProviderKey, ProviderConfig>>
+  searchProviders: Partial<Record<SearchProviderKey, SearchProviderConfig>>  // NEW
+  defaults?: {
+    augmentation?: ProviderKey
+    embedding?: ProviderKey
+    search?: SearchProviderKey  // NEW
+  }
+}
+```
+
+##### 6.5 Search Tool Implementations
+
+Create unified search tools in `src/lib/websearch/`:
+
+```typescript
+// src/lib/websearch/types.ts
+export interface SearchResult {
+  title: string
+  link: string
+  snippet: string
+}
+
+export interface SearchProvider {
+  search(query: string, numResults?: number): Promise<SearchResult[]>
+}
+```
+
+```typescript
+// src/lib/websearch/serper.ts
+export class SerperSearch implements SearchProvider {
+  constructor(private apiKey: string) {}
+
+  async search(query: string, numResults = 5): Promise<SearchResult[]> {
+    const response = await fetch('https://google.serper.dev/search', {
+      method: 'POST',
+      headers: {
+        'X-API-KEY': this.apiKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ q: query, num: numResults }),
+    })
+
+    const { organic } = await response.json()
+    return organic.map((r: any) => ({
+      title: r.title,
+      link: r.link,
+      snippet: r.snippet || r.description || '',
+    }))
+  }
+}
+```
+
+```typescript
+// src/lib/websearch/tavily.ts
+export class TavilySearch implements SearchProvider {
+  constructor(private apiKey: string) {}
+
+  async search(query: string, numResults = 5): Promise<SearchResult[]> {
+    const response = await fetch('https://api.tavily.com/search', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        api_key: this.apiKey,
+        query,
+        max_results: numResults,
+      }),
+    })
+
+    const { results } = await response.json()
+    return results.map((r: any) => ({
+      title: r.title,
+      link: r.url,
+      snippet: r.content,
+    }))
+  }
+}
+```
+
+##### 6.6 AI SDK Tool Definition
+
+```typescript
+// src/lib/websearch/tool.ts
+import { tool } from 'ai'
+import { z } from 'zod'
+
+export function createWebSearchTool(searchProvider: SearchProvider) {
+  return tool({
+    description: 'Search the web for current information. Use this when you need up-to-date facts, news, or data.',
+    parameters: z.object({
+      query: z.string().describe('The search query'),
+    }),
+    execute: async ({ query }) => {
+      const results = await searchProvider.search(query, 5)
+      return results.map(r =>
+        `[${r.title}](${r.link})\n${r.snippet}`
+      ).join('\n\n')
+    },
+  })
+}
+```
+
+**Usage in `generateText`:**
+
+```typescript
+const searchTool = createWebSearchTool(new TavilySearch(apiKey))
+
+const { text } = await generateText({
+  model: anthropic('claude-3-5-sonnet-20241022'),
+  prompt: userPrompt,
+  tools: {
+    web_search: searchTool,
+  },
+  maxSteps: 3,
+})
+```
+
+##### 6.7 Caching Layer
+
+Cache search results to reduce API costs:
+
+```typescript
+// src/lib/websearch/cache.ts
+const searchCache = new Map<string, { results: SearchResult[], timestamp: number }>()
+const CACHE_TTL = 360 * 2 * 60 * 1000 // 12 hours
+
+export async function cachedSearch(
+  provider: SearchProvider,
+  query: string
+): Promise<SearchResult[]> {
+  const cacheKey = `${provider.constructor.name}:${query}`
+  const cached = searchCache.get(cacheKey)
+
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+    return cached.results
+  }
+
+  const results = await provider.search(query)
+  searchCache.set(cacheKey, { results, timestamp: Date.now() })
+  return results
+}
+```
+
+##### v1 Effort Estimate
+
+| Task | Hours |
+|------|-------|
+| Search provider config schema | 1-2 |
+| Settings UI - Search Providers tab | 3-4 |
+| Serper implementation | 1-2 |
+| Tavily implementation | 1-2 |
+| Brave implementation | 1-2 |
+| AI SDK tool wrapper | 2 |
+| Caching layer | 2 |
+| Integration in `generate-column` route | 2-3 |
+| Testing across providers | 2-3 |
+| **Total** | **15-20 hours** |
+
+---
+
+### Considerations
+
+#### Rate Limiting & Usage Tracking
+
+| Provider | Free Tier | Tracking Needed |
+|----------|-----------|-----------------|
+| OpenAI web_search | Token-based | Included in LLM usage |
+| Perplexity | Token-based | Included in LLM usage |
+| Serper | 2,500/month | Track query count |
+| Tavily | 1,000/month | Track query count |
+| Brave | 2,000/month | Track query count |
+
+Consider adding usage counters in localStorage or DuckDB to warn users when approaching limits.
+
+#### Batch Processing Impact
+
+With web search enabled, each row may trigger searches:
+- 100 rows × 1-2 searches = 100-200 API calls
+- Add confirmation dialog: "This will use approximately X search queries"
+- Consider search query deduplication across similar rows
+
+#### Structured Output Compatibility
+
+Web search works with both text and structured output modes:
+
+```typescript
+// Structured output with web search
+const { object } = await generateObject({
+  model: openai.responses('gpt-4o'),
+  schema: outputSchema,
+  prompt: promptWithSchema,
+  tools: {
+    web_search: openai.tools.webSearch(),
+  },
+  maxSteps: 3,
+})
+```
+
+### File Structure
+
+```
+src/lib/websearch/
+├── index.ts                 # Exports
+├── types.ts                 # SearchResult, SearchProvider interfaces
+├── serper.ts                # Serper API implementation
+├── tavily.ts                # Tavily API implementation
+├── brave.ts                 # Brave Search implementation
+├── tool.ts                  # AI SDK tool wrapper
+└── cache.ts                 # Result caching
+
+src/config/
+├── provider-settings.ts     # Add SearchProviderKey, SearchProviderConfig
+└── search-providers.ts      # Search provider metadata (free tiers, etc.)
+```
+
+### Effort Summary
+
+| Phase | Scope | Hours |
+|-------|-------|-------|
+| **v0** | OpenAI Responses API + Perplexity + `experimental_output` | 12-16 |
+| **v1** | External search providers (Serper, Tavily, Brave) | 15-20 |
+| **Total** | Full web search capability | **27-36 hours** |
+
+---
+
 ## Priority Matrix (Revised)
 
 Given the workflow context (Parse → Augment → Visualize), priorities are:
@@ -837,7 +1389,9 @@ Given the workflow context (Parse → Augment → Visualize), priorities are:
 | **Embedding Atlas Deep Integration** | Critical - destination of workflow | High (18-22 hrs) | **P0** |
 | **LLM-as-a-Judge Templates** | Critical - key augmentation use case | Medium (4-6 hrs) | **P0** |
 | **Export Functionality** | High - enables downstream workflows | Medium (6-8 hrs) | **P1** |
+| **Web Search v0** | High - fact-checking, current info | Medium (12-16 hrs) | **P1** |
 | **Single-Cell Retry** | Medium - improves augmentation UX | Medium (4-6 hrs) | **P2** |
+| **Web Search v1** | Medium - provider flexibility | Medium (15-20 hrs) | **P2** |
 | **HuggingFace Improvements** | Medium - quality of life | High (8-12 hrs) | **P3** |
 | **LLM-as-a-Judge Registry** | High - community value | High | **P4** (Future) |
 
@@ -861,14 +1415,25 @@ Given the workflow context (Parse → Augment → Visualize), priorities are:
    - Enables workflow completion
    - Users can take insights elsewhere
 
-4. **Single-Cell Retry** (4-6 hours)
+4. **Web Search v0** (12-16 hours)
+   - OpenAI Responses API migration
+   - Add Perplexity provider
+   - `experimental_output` for structured output + web search
+   - Enables fact-checking and current info grounding
+
+5. **Single-Cell Retry** (4-6 hours)
    - Quality of life for augmentation step
 
-5. **HuggingFace** (8-12 hours)
+6. **Web Search v1** (15-20 hours)
+   - External search providers (Serper, Tavily, Brave)
+   - Search provider config UI
+   - Any LLM can use any search tool
+
+7. **HuggingFace** (8-12 hours)
    - Can be incremental
    - Caching already helps with 12-hour TTL
 
-6. **LLM-as-a-Judge Prompt Registry** (Future)
+8. **LLM-as-a-Judge Prompt Registry** (Future)
    - Build after core features are stable and adopted
    - Similar to Promptfoo's vulnerability database model
    - Community-contributed evaluation prompts
@@ -885,3 +1450,11 @@ Given the workflow context (Parse → Augment → Visualize), priorities are:
 - [Lilac ML](https://github.com/lilacai/lilac) - Conceptual search inspiration
 - [LLM-as-a-Judge Paper](https://arxiv.org/abs/2306.05685)
 - [DuckDB Vector Functions](https://duckdb.org/docs/sql/functions/list.html) - list_cosine_similarity
+
+### Web Search
+- [AI SDK OpenAI Responses Guide](https://sdk.vercel.ai/docs/guides/openai-responses) - OpenAI Responses API integration
+- [AI SDK Perplexity Provider](https://sdk.vercel.ai/providers/ai-sdk-providers/perplexity) - Perplexity with native search
+- [AI SDK Tool Calling](https://sdk.vercel.ai/docs/ai-sdk-core/tools-and-tool-calling) - Custom tool definitions
+- [Serper API](https://serper.dev/) - Google search API (2,500 free/month)
+- [Tavily API](https://tavily.com/) - AI-optimized search (1,000 free/month)
+- [Brave Search API](https://brave.com/search/api/) - Privacy-focused search (2,000 free/month)

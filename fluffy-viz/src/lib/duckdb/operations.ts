@@ -262,6 +262,25 @@ export async function addColumn(
 }
 
 /**
+ * Remove a column from a file's data table
+ */
+export async function removeColumn(
+  fileId: string,
+  columnName: string
+): Promise<void> {
+  const tableName = `file_data_${fileId}`;
+  const sanitizedColumn = sanitizeColumnName(columnName);
+
+  // Drop the column from the table
+  await executeQuery(
+    `ALTER TABLE "${tableName}" DROP COLUMN "${sanitizedColumn}"`,
+    []
+  );
+
+  console.log(`[DuckDB Operations] Removed column "${sanitizedColumn}" from ${tableName}`);
+}
+
+/**
  * Batch update column values
  */
 export async function batchUpdateColumn(
@@ -351,8 +370,8 @@ export async function tableExists(fileId: string): Promise<boolean> {
 export async function saveColumnMetadata(metadata: ColumnMetadata): Promise<void> {
   await executeQuery(
     `INSERT OR REPLACE INTO column_metadata
-     (file_id, column_id, column_name, column_type, model, provider, prompt, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+     (file_id, column_id, column_name, column_type, model, provider, prompt, created_at, output_schema)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       metadata.fileId,
       metadata.columnId,
@@ -361,7 +380,8 @@ export async function saveColumnMetadata(metadata: ColumnMetadata): Promise<void
       metadata.model || null,
       metadata.provider || null,
       metadata.prompt || null,
-      metadata.createdAt || Date.now()
+      metadata.createdAt || Date.now(),
+      metadata.outputSchema ? JSON.stringify(metadata.outputSchema) : null
     ]
   );
 
@@ -384,6 +404,7 @@ export async function getColumnMetadata(
     provider: string | null;
     prompt: string | null;
     created_at: number | null;
+    output_schema: string | null;
   }>(
     `SELECT * FROM column_metadata WHERE file_id = ? AND column_id = ?`,
     [fileId, columnId]
@@ -401,6 +422,7 @@ export async function getColumnMetadata(
     provider: row.provider || undefined,
     prompt: row.prompt || undefined,
     createdAt: row.created_at || undefined,
+    outputSchema: row.output_schema ? JSON.parse(row.output_schema) : undefined,
   };
 }
 
@@ -417,6 +439,7 @@ export async function getAllColumnMetadata(fileId: string): Promise<ColumnMetada
     provider: string | null;
     prompt: string | null;
     created_at: number | null;
+    output_schema: string | null;
   }>(
     `SELECT * FROM column_metadata WHERE file_id = ? ORDER BY created_at`,
     [fileId]
@@ -431,6 +454,7 @@ export async function getAllColumnMetadata(fileId: string): Promise<ColumnMetada
     provider: row.provider || undefined,
     prompt: row.prompt || undefined,
     createdAt: row.created_at || undefined,
+    outputSchema: row.output_schema ? JSON.parse(row.output_schema) : undefined,
   }));
 }
 
