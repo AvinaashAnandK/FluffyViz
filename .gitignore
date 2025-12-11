@@ -1,14 +1,14 @@
-# Large sample data files (exceed GitHub's 100MB limit)
-sample-data/*.csv
-sample-data/**/*.csv
+# Claude Code configuration
+.claude/
 
-# Python virtual environments
-sample-data/.venv/
-**/.venv/
-**/__pycache__/
+# Playwright MCP
+.playwright-mcp/
 
-# Playwright screenshots (temporary testing artifacts)
-.playwright-mcp/*.png
+# Project documentation (local only)
+ProjectDetails/
+
+# Sample data files
+sample-data/
 
 # IDE and OS files
 .DS_Store
@@ -17,6 +17,10 @@ sample-data/.venv/
 *~
 .vscode/
 .idea/
+
+# Python virtual environments
+**/.venv/
+**/__pycache__/
 
 # Logs
 *.log
@@ -34,3 +38,9 @@ yarn-error.log*
 # Provider configuration (contains API keys)
 provider-config.json
 fluffy-viz/provider-config.json
+
+# MCP configuration
+.mcp.json
+
+# Large image files
+*.png
