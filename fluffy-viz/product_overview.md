@@ -43,7 +43,7 @@ Add intelligent columns using AI models:
 
 **Model Selection**:
 - Search models from HuggingFace registry
-- Choose from 10 providers: OpenAI, Anthropic, Google, Groq, Together AI, Mistral, Cohere, Novita, HuggingFace, Local LLM
+- Choose from 10+ providers: OpenAI, Anthropic, Google, Perplexity, Groq, Together AI, Mistral, Cohere, Novita, HuggingFace
 - Configure API keys per provider
 
 **Prompt Editor**:
@@ -51,7 +51,38 @@ Add intelligent columns using AI models:
 - Type `@` to insert column references
 - Preview interpolated prompts before generation
 
-### 4. Conversational History Aggregation
+**Generation Settings**:
+- Temperature control (creativity vs. focus)
+- Max tokens limit
+- Web search configuration
+
+### 4. Web Search Augmentation (NEW)
+
+Enhance AI responses with real-time web information:
+
+**How It Works**:
+- Enable "Web Search" toggle in Generation Settings
+- Configure location (City, Region, Country as ISO code)
+- AI queries the web before generating responses
+- Sources automatically saved to companion `_sources` column
+
+**Supported Providers**:
+| Provider | Search Type | Notes |
+|----------|-------------|-------|
+| OpenAI | Tool-based | Uses `web_search_preview` tool via Responses API |
+| Perplexity | Built-in | Always searches, location optional |
+| Google | Grounding | Search grounding for Gemini models |
+
+**Location Settings**:
+- City: Free text (e.g., "Bangalore")
+- Region: Free text (e.g., "Karnataka")
+- Country: ISO code (e.g., "IN" for India, "US" for USA)
+
+**Output**:
+- Main column: AI response with current information
+- Sources column: JSON array of URLs used
+
+### 5. Conversational History Aggregation
 
 Transform multi-turn conversations into formatted context:
 
@@ -63,7 +94,17 @@ Transform multi-turn conversations into formatted context:
 
 Uses `conversation_id` and `sequence_id` columns to group and order turns.
 
-### 5. Embedding Visualization
+### 6. Structured Output Mode
+
+Generate JSON responses validated against a schema:
+
+**Features**:
+- Define output fields with types (string, number, boolean, array)
+- Schema validation ensures consistent output
+- Automatic expansion into separate columns per field
+- Works with all providers via Vercel AI SDK
+
+### 7. Embedding Visualization
 
 Generate and visualize semantic embeddings:
 
@@ -75,12 +116,12 @@ Generate and visualize semantic embeddings:
 - **Interactive Scatter Plot** - Click points to view trace details
 - **Persistent Layers** - Save embedding layers for comparison
 
-### 6. Privacy-First Architecture
+### 8. Privacy-First Architecture
 
 - **All data stays in your browser** - DuckDB WASM database
 - **No server-side storage** - Files stored in IndexedDB
 - **Provider API calls** - Only when you explicitly generate content
-- **Max file size** - 50MB (warning at 25MB)
+- **Max file size** - 50MB (warning at 30MB)
 
 ---
 
@@ -90,7 +131,7 @@ Generate and visualize semantic embeddings:
 
 Transform raw agent logs into structured data for:
 - Model performance analysis
-- Quality evaluation
+- Quality evaluation (LLM-as-a-Judge)
 - A/B testing insights
 - Error pattern detection
 
@@ -125,18 +166,28 @@ Gain insights into:
 1. Click "Add Column" button
 2. Select a template or write custom prompt
 3. Choose AI model and provider
-4. Map template variables to columns
-5. Preview interpolated prompt
-6. Generate augmented data
+4. Configure Generation Settings:
+   - Temperature and max tokens
+   - Enable web search (optional)
+   - Set location for local results
+5. Map template variables to columns
+6. Preview interpolated prompt
+7. Generate augmented data
 
-### Step 4: Iterate
+### Step 4: Review Results
 
+- AI responses appear in new column
+- Sources (if web search enabled) in `_sources` column
+- Cell metadata tracks status (success/failed)
 - Retry failed cells with different models
+
+### Step 5: Iterate
+
 - Add multiple AI columns
 - Aggregate conversational history
 - Generate embeddings for visualization
 
-### Step 5: Visualize
+### Step 6: Visualize
 
 1. Open Embedding Wizard
 2. Select composition mode
@@ -161,18 +212,18 @@ Gain insights into:
 
 ## AI Provider Support
 
-| Provider | Free Tier | Text | Embeddings | Streaming |
-|----------|-----------|------|------------|-----------|
-| HuggingFace | Yes | Yes | Yes | Yes |
-| Google AI | Yes | Yes | Yes | Yes |
-| Cohere | Yes | Yes | Yes | Yes |
-| Mistral | Yes | Yes | Yes | Yes |
-| Groq | Yes | Yes | No | Yes |
-| Together AI | Yes | Yes | No | Yes |
-| Novita AI | Yes | Yes | No | Yes |
-| OpenAI | No | Yes | Yes | Yes |
-| Anthropic | No | Yes | No | Yes |
-| Local LLM | Yes | Yes | No | - |
+| Provider | Free Tier | Text | Embeddings | Web Search | Streaming |
+|----------|-----------|------|------------|------------|-----------|
+| OpenAI | No | Yes | Yes | Yes | Yes |
+| Perplexity | No | Yes | No | Built-in | Yes |
+| Google AI | Yes | Yes | Yes | Yes | Yes |
+| Anthropic | No | Yes | No | No | Yes |
+| Groq | Yes | Yes | No | No | Yes |
+| Cohere | Yes | Yes | Yes | No | Yes |
+| Mistral | Yes | Yes | Yes | No | Yes |
+| Together AI | Yes | Yes | No | No | Yes |
+| HuggingFace | Yes | Yes | Yes | No | Yes |
+| Novita AI | Yes | Yes | No | No | Yes |
 
 ---
 
@@ -197,6 +248,7 @@ Categorize content into user-defined classes.
 Write your own prompts with:
 - Single column input - reference one data column
 - Multi-column input - combine multiple columns
+- Web search augmentation - get current information
 
 ### Conversational History
 Aggregate multi-turn conversations with configurable strategies.
@@ -216,15 +268,15 @@ Aggregate multi-turn conversations with configurable strategies.
 3. Explore the spreadsheet editor
 4. Add an AI column using a template
 5. Configure your provider API key
-6. Generate augmented data
+6. Enable web search for current information (optional)
+7. Generate augmented data
 
 ### Sample Files
 
-FluffyViz includes sample files for testing:
-- `sample-message-centric.jsonl`
-- `sample-langfuse.json`
-- `sample-langsmith.json`
-- `sample-turn-level.csv`
+FluffyViz works with standard agent log formats:
+- Message-centric JSONL
+- Langfuse/LangSmith JSON exports
+- Turn-level CSV files
 
 ---
 
@@ -234,6 +286,7 @@ FluffyViz includes sample files for testing:
 - **Large datasets**: Use filtering and pagination for datasets >1000 rows
 - **Embedding generation**: Batch processing with progress tracking
 - **Model selection**: Some providers have rate limits on free tiers
+- **Web search**: Adds latency (~1-3 seconds per request)
 
 ---
 
@@ -255,6 +308,9 @@ FluffyViz is designed with privacy as a core principle:
 ### Agent Quality Analysis
 Upload agent logs → Classify response quality → Aggregate by conversation → Identify patterns
 
+### Search-Augmented Responses
+Upload questions → Enable web search → Generate current answers → Verify with sources
+
 ### Multi-Language Support
 Upload conversations → Translate to target language → Extract sentiment → Compare across languages
 
@@ -275,35 +331,52 @@ Upload runs → Generate embeddings → Visualize semantic similarity → Compar
 A: All data is stored locally in your browser's DuckDB WASM database (backed by IndexedDB). Clearing your browser data will remove your files.
 
 **Q: Do I need an API key?**
-A: To use AI columns, you will need to configure API keys for your chosen providers (e.g., OpenAI, Anthropic, HuggingFace). These keys are stored securely in your local browser storage.
+A: To use AI columns, you need API keys for your chosen providers (e.g., OpenAI, Perplexity). Keys are stored securely in your local browser storage.
 
 **Q: Can I work offline?**
-A: Yes! You can upload, view, and edit files completely offline. Only the AI column generation and embedding visualization require an internet connection.
+A: Yes! You can upload, view, and edit files completely offline. Only AI column generation requires an internet connection.
 
 **Q: What file size limits apply?**
-A: Maximum 50MB per file. A warning appears at 25MB. For larger datasets, consider pre-filtering your data.
+A: Maximum 50MB per file. A warning appears at 30MB. For larger datasets, consider pre-filtering your data.
+
+**Q: How does web search work?**
+A: When enabled, the AI provider searches the web before generating a response. Sources are saved to a companion column for verification.
+
+**Q: Which providers support web search?**
+A: OpenAI (via Responses API), Perplexity (built-in), and Google (search grounding).
+
+---
+
+## Known Issues
+
+### Search-Preview Models Not Supported
+Models like `gpt-4o-search-preview` don't work due to an AI SDK bug. Use:
+- OpenAI Responses API models (GPT-4o, GPT-4.1) with web search tool
+- Perplexity models (Sonar, Sonar Pro) with built-in search
+
+See [PROVIDER_CONFIG.md](./PROVIDER_CONFIG.md) for details.
 
 ---
 
 ## Roadmap
 
 ### Current Focus
+- Web search augmentation with sources
 - Enhanced prompt editor with variable pills
 - Improved error handling and retry mechanisms
-- Extended provider support
 
 ### Future Plans
+- Export functionality (CSV, JSON, Parquet)
 - Web Worker support for large files
 - Virtual scrolling for 10k+ row datasets
 - OAuth integration for providers
-- Export to additional visualization tools
 - Collaborative editing features
 
 ---
 
 ## Support
 
-- **Documentation**: See technical docs for implementation details
+- **Documentation**: See technical_docs.md for implementation details
 - **Issues**: Report bugs and feature requests on GitHub
 - **Contributing**: Pull requests welcome
 
@@ -311,7 +384,13 @@ A: Maximum 50MB per file. A warning appears at 25MB. For larger datasets, consid
 
 ## Summary
 
-FluffyViz empowers AI/ML teams to quickly analyze and augment their agent data without:
+FluffyViz empowers AI/ML teams to quickly analyze and augment their agent data:
+
+- **Parse** any format with auto-detection
+- **Augment** with 10+ AI providers and web search
+- **Visualize** patterns with embedding clusters
+
+All without:
 - Writing custom scripts
 - Setting up infrastructure
 - Compromising data privacy

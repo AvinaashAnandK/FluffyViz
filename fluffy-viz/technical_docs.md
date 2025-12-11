@@ -5,24 +5,37 @@
 FluffyViz is a client-side web application built with Next.js 15 (App Router), React 19, and TypeScript. All data processing occurs in the browser using DuckDB WASM for storage and querying.
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    Browser Environment                   │
-├─────────────────────────────────────────────────────────┤
-│  Next.js App Router                                      │
-│  ├── Pages & Layouts                                     │
-│  ├── API Routes (provider config, prompts)               │
-│  └── Components (React 19)                               │
-├─────────────────────────────────────────────────────────┤
-│  Data Layer                                              │
-│  ├── DuckDB WASM (IndexedDB persistence)                 │
-│  ├── Format Detection & Parsing                          │
-│  └── File Storage Abstraction                            │
-├─────────────────────────────────────────────────────────┤
-│  AI Integration                                          │
-│  ├── Vercel AI SDK (multi-provider)                      │
-│  ├── HuggingFace Inference API                           │
-│  └── Embedding Pipeline (UMAP reduction)                 │
-└─────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           Browser Environment                                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │                     Next.js 15 App Router                            │    │
+│  │  ┌──────────────┐  ┌──────────────┐  ┌────────────────────────┐    │    │
+│  │  │   Pages &    │  │     API      │  │      Components        │    │    │
+│  │  │   Layouts    │  │    Routes    │  │   (React 19 + shadcn)  │    │    │
+│  │  └──────────────┘  └──────────────┘  └────────────────────────┘    │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+│                                       │                                      │
+│                                       ▼                                      │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │                          Data Layer                                  │    │
+│  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐  │    │
+│  │  │   DuckDB WASM    │  │  Format Parser   │  │   File Storage   │  │    │
+│  │  │  (IndexedDB)     │  │  (Auto-detect)   │  │   Abstraction    │  │    │
+│  │  └──────────────────┘  └──────────────────┘  └──────────────────┘  │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+│                                       │                                      │
+│                                       ▼                                      │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │                        AI Integration                                │    │
+│  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐  │    │
+│  │  │  Vercel AI SDK   │  │   Web Search     │  │    Embedding     │  │    │
+│  │  │  (10+ providers) │  │   + Sources      │  │  UMAP Pipeline   │  │    │
+│  │  └──────────────────┘  └──────────────────┘  └──────────────────┘  │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -32,26 +45,28 @@ FluffyViz is a client-side web application built with Next.js 15 (App Router), R
 ### Core Framework
 | Package | Version | Purpose |
 |---------|---------|---------|
-| Next.js | 15.5.4 | App Router, API routes, Turbopack |
-| React | 19.1.0 | UI components with React Compiler |
+| Next.js | 15.x | App Router, API routes, Turbopack |
+| React | 19.x | UI components with React Compiler |
 | TypeScript | 5.x | Strict type checking |
 | Tailwind CSS | 4.x | Utility-first styling |
 
 ### Data & Storage
 | Package | Purpose |
 |---------|---------|
-| @duckdb/wasm | In-browser SQL database |
+| @duckdb/duckdb-wasm | In-browser SQL database |
 | @uwdata/mosaic-core | Data binding for visualizations |
 | papaparse | CSV parsing |
 | js-yaml | YAML template parsing |
+| zod | Schema validation |
 
 ### AI Integration
 | Package | Purpose |
 |---------|---------|
 | ai (Vercel AI SDK) | Unified LLM interface |
-| @ai-sdk/openai | OpenAI models |
+| @ai-sdk/openai | OpenAI models + web search |
 | @ai-sdk/anthropic | Claude models |
-| @ai-sdk/google | Gemini models |
+| @ai-sdk/google | Gemini models + grounding |
+| @ai-sdk/perplexity | Perplexity models (built-in search) |
 | @ai-sdk/groq | Groq models |
 | @ai-sdk/mistral | Mistral models |
 | @ai-sdk/cohere | Cohere models |
@@ -75,21 +90,23 @@ FluffyViz is a client-side web application built with Next.js 15 (App Router), R
 fluffy-viz/
 ├── src/
 │   ├── app/                          # Next.js App Router
-│   │   ├── page.tsx                  # Home page
+│   │   ├── page.tsx                  # Home page (file upload)
 │   │   ├── layout.tsx                # Root layout
 │   │   ├── edit/[fileId]/page.tsx    # Spreadsheet editor
 │   │   └── api/                      # API routes
 │   │       ├── generate-column/      # AI inference endpoint
+│   │       ├── model-registry/       # Model definitions API
 │   │       ├── prompts/[templateId]/ # Template loader
 │   │       └── provider-config/      # Provider settings
 │   │
 │   ├── components/
 │   │   ├── spreadsheet/              # Data editing components
-│   │   │   ├── SpreadsheetEditor.tsx # Main editor (1500+ lines)
+│   │   │   ├── SpreadsheetEditor.tsx # Main editor
 │   │   │   ├── SpreadsheetTable.tsx  # Table rendering
 │   │   │   ├── AddColumnModal.tsx    # AI column workflow
+│   │   │   ├── GenerationSettings.tsx# Temperature, tokens, web search
 │   │   │   ├── PromptComposer.tsx    # TipTap editor
-│   │   │   ├── ModelSelector.tsx     # HuggingFace model search
+│   │   │   ├── ModelSelector.tsx     # Model search
 │   │   │   ├── ProviderSelector.tsx  # Provider filtering
 │   │   │   ├── ConversationalHistoryConfig.tsx
 │   │   │   ├── AiCell.tsx            # Cell with status
@@ -104,13 +121,14 @@ fluffy-viz/
 │   │   └── ...                       # Other components
 │   │
 │   ├── lib/
-│   │   ├── ai-inference.ts           # LLM integration
+│   │   ├── ai-inference.ts           # LLM + web search integration
 │   │   ├── format-detector.ts        # Format auto-detection
 │   │   ├── format-parser.ts          # Data parsing & flattening
 │   │   ├── conversational-history.ts # Turn aggregation
 │   │   ├── prompt-serializer.ts      # TipTap → template conversion
-│   │   ├── models.ts                 # HuggingFace model search
+│   │   ├── models.ts                 # Model utilities
 │   │   ├── providers.ts              # Provider definitions
+│   │   ├── error-messages.ts         # Error classification
 │   │   │
 │   │   ├── duckdb/                   # Database layer
 │   │   │   ├── index.ts              # Main export
@@ -132,20 +150,21 @@ fluffy-viz/
 │   ├── types/
 │   │   ├── agent-data.ts             # Data format types
 │   │   ├── models.ts                 # AI model types
+│   │   ├── web-search.ts             # Web search config types
 │   │   ├── embedding.ts              # Embedding types
 │   │   └── file-storage.ts           # Storage types
 │   │
 │   └── config/
 │       ├── ai-column-templates.ts    # Template definitions
+│       ├── model-registry.ts         # Client-side registry
+│       ├── models/
+│       │   └── model-registry.yaml   # Model definitions
 │       ├── parser.config.ts          # Parser limits
-│       └── provider-settings.ts      # Provider metadata
+│       ├── provider-settings.ts      # Provider metadata
+│       └── prompts/                  # YAML template files
 │
-├── config/
-│   └── prompts/                      # YAML template files
-│
-├── public/
-│   └── sample-*.{json,jsonl,csv}     # Sample data files
-│
+├── CLAUDE.md                         # AI assistant context
+├── PROVIDER_CONFIG.md                # Provider setup guide
 └── package.json
 ```
 
@@ -155,19 +174,18 @@ fluffy-viz/
 
 ### 1. File Upload & Parsing
 
-```typescript
-// EnhancedUpload.tsx
+```
 File upload
   → FormatDetector.detectFormat(content)     // Confidence scoring
   → parseFileContent(content, format)        // Flatten nested data
-  → useFileStorage.saveFile(normalizedData)  // Persist to DuckDB
+  → saveFileToDuckDB(normalizedData)         // Persist to DuckDB
   → router.push(`/edit/${fileId}`)
 ```
 
 **Key Files**:
 - `src/lib/format-detector.ts` - Detection with confidence scores
 - `src/lib/format-parser.ts` - Parsing with memoization (LRU cache)
-- `src/hooks/use-file-storage.ts` - Storage abstraction
+- `src/lib/duckdb/file-storage.ts` - Storage abstraction
 
 **Flattening Algorithm**:
 ```typescript
@@ -185,8 +203,7 @@ Configuration (`src/config/parser.config.ts`):
 
 ### 2. Spreadsheet Rendering
 
-```typescript
-// SpreadsheetEditor.tsx
+```
 useFileStorage.getFile(fileId)
   → queryFileDataWithMetadata(fileId, options)  // DuckDB query
   → SpreadsheetTable renders with pagination
@@ -200,28 +217,75 @@ useFileStorage.getFile(fileId)
 
 ### 3. AI Column Generation
 
-```typescript
-// AddColumnModal.tsx
-Template selection
-  → ModelSelector (HuggingFace API search)
-  → ProviderSelector (filter by capability)
+```
+AddColumnModal
+  → Template selection or custom prompt
+  → ModelSelector (filter by provider/capability)
+  → ProviderSelector (filter by enabled/search support)
+  → GenerationSettings (temperature, tokens, web search)
   → PromptComposer (TipTap with variable pills)
-  → generateColumnData() via /api/generate-column
+  → POST /api/generate-column
+  → generateColumnData() with cell callbacks
   → batchUpdateColumn() saves results
-  → saveCellMetadata() tracks status per cell
+  → If web search: create companion _sources column
 ```
 
 **Key Files**:
 - `src/components/spreadsheet/AddColumnModal.tsx`
+- `src/components/spreadsheet/GenerationSettings.tsx`
 - `src/components/spreadsheet/PromptComposer.tsx`
 - `src/lib/ai-inference.ts`
 - `src/app/api/generate-column/route.ts`
 
-### 4. Embedding Pipeline
+### 4. Web Search Flow
 
-```typescript
-// EmbeddingWizard.tsx
-Select composition mode (single/multi/conversational)
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Web Search Architecture                       │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  AddColumnModal                                                  │
+│       │                                                          │
+│       ▼                                                          │
+│  ┌─────────────────┐                                            │
+│  │ webSearch config│ { enabled, contextSize, userLocation }     │
+│  └────────┬────────┘                                            │
+│           │                                                      │
+│           ▼                                                      │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │              /api/generate-column                        │    │
+│  │  ┌─────────────────────────────────────────────────┐    │    │
+│  │  │  Provider Routing (ai-inference.ts)             │    │    │
+│  │  │                                                  │    │    │
+│  │  │  OpenAI (Responses API)                         │    │    │
+│  │  │    → getWebSearchTools() → web_search_preview   │    │    │
+│  │  │    → Sources from toolResults                   │    │    │
+│  │  │                                                  │    │    │
+│  │  │  Perplexity (Built-in)                          │    │    │
+│  │  │    → getPerplexityProviderOptions()             │    │    │
+│  │  │    → Location via providerOptions               │    │    │
+│  │  │    → Sources from result.sources                │    │    │
+│  │  │                                                  │    │    │
+│  │  │  Google (Grounding)                             │    │    │
+│  │  │    → googleSearch tool                          │    │    │
+│  │  └─────────────────────────────────────────────────┘    │    │
+│  └─────────────────────────────────────────────────────────┘    │
+│           │                                                      │
+│           ▼                                                      │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │  SpreadsheetEditor                                       │    │
+│  │    → Creates main column + {column}_sources column       │    │
+│  │    → Stores sources as JSON array of URLs               │    │
+│  └─────────────────────────────────────────────────────────┘    │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 5. Embedding Pipeline
+
+```
+EmbeddingWizard
+  → Select composition mode (single/multi/conversational)
   → composeTexts() creates text array
   → generateEmbeddings() via provider API
   → umapReduce() projects to 2D
@@ -258,7 +322,7 @@ CREATE TABLE file_metadata (
 
 **Dynamic Data Tables** (`file_data_{fileId}`):
 - Created per file with columns matching parsed data
-- Supports arbitrary column additions
+- Supports arbitrary column additions (AI columns, _sources columns)
 
 **Column Metadata** (`column_metadata` table):
 ```sql
@@ -266,11 +330,13 @@ CREATE TABLE column_metadata (
   file_id VARCHAR,
   column_id VARCHAR,
   column_name VARCHAR,
+  column_type VARCHAR,      -- 'ai-generated', 'computed', 'original'
   template_id VARCHAR,
   model_id VARCHAR,
   provider VARCHAR,
   prompt_template VARCHAR,
-  created_at TIMESTAMP
+  output_schema TEXT,       -- JSON schema for structured output
+  created_at BIGINT
 );
 ```
 
@@ -278,34 +344,17 @@ CREATE TABLE column_metadata (
 ```sql
 CREATE TABLE cell_metadata (
   file_id VARCHAR,
-  row_id INTEGER,
   column_id VARCHAR,
-  status VARCHAR,         -- 'pending', 'completed', 'failed'
-  failure_type VARCHAR,   -- 'rate_limit', 'auth', 'server_error', etc.
-  error_message VARCHAR,
-  attempts INTEGER,
-  created_at TIMESTAMP,
-  updated_at TIMESTAMP
+  row_index INTEGER,
+  status VARCHAR,           -- 'pending', 'success', 'failed'
+  error VARCHAR,
+  error_type VARCHAR,       -- 'rate_limit', 'auth', 'network', etc.
+  edited BOOLEAN,
+  last_edit_time BIGINT,
+  original_value TEXT,
+  sources TEXT,             -- JSON array of {url, title}
+  PRIMARY KEY (file_id, column_id, row_index)
 );
-```
-
-### Client Initialization
-
-```typescript
-// src/lib/duckdb/client.ts
-import * as duckdb from '@duckdb/duckdb-wasm';
-
-let db: AsyncDuckDB | null = null;
-
-export async function getDatabase(): Promise<AsyncDuckDB> {
-  if (!db) {
-    const bundle = await duckdb.selectBundle(/* ... */);
-    const worker = new Worker(bundle.mainWorker);
-    db = new duckdb.AsyncDuckDB(/* ... */);
-    await db.instantiate(bundle.mainModule);
-  }
-  return db;
-}
 ```
 
 ### Key Operations
@@ -322,24 +371,25 @@ export async function queryFileData(
 // Add new column
 export async function addColumn(
   fileId: string,
-  columnName: string,
+  columnId: string,
+  type: string,
   defaultValue: any
 ): Promise<void>;
 
 // Batch update column values
 export async function batchUpdateColumn(
   fileId: string,
-  columnName: string,
-  updates: { rowId: number, value: any }[]
-): Promise<BatchOperationResult>;
+  columnId: string,
+  updates: { rowIndex: number, value: any }[]
+): Promise<void>;
 
 // Save cell inference metadata
 export async function saveCellMetadata(
-  fileId: string,
-  rowId: number,
-  columnId: string,
-  metadata: Partial<CellMetadata>
+  metadata: CellMetadata
 ): Promise<void>;
+
+// Persist database to IndexedDB
+export async function persistDatabase(): Promise<void>;
 ```
 
 ---
@@ -349,92 +399,168 @@ export async function saveCellMetadata(
 ### Provider Architecture
 
 ```typescript
-// src/lib/providers.ts
-export const PROVIDER_META: Record<ProviderKey, ProviderMetadata> = {
-  huggingface: {
-    displayName: 'HuggingFace',
-    hasFree: true,
-    supportsText: true,
-    supportsEmbeddings: true,
-    supportsStreaming: true,
-    requiresApiKey: true
+// src/config/provider-settings.ts
+export const PROVIDER_SETTINGS: Record<ProviderKey, ProviderSettings> = {
+  openai: {
+    displayName: 'OpenAI',
+    envKey: 'OPENAI_API_KEY',
+    capabilities: {
+      text: true,
+      embedding: true,
+      mmEmbedding: false,
+    },
+    batchSize: 5,
   },
-  openai: { /* ... */ },
-  anthropic: { /* ... */ },
-  // ... 10 providers total
+  perplexity: {
+    displayName: 'Perplexity',
+    envKey: 'PERPLEXITY_API_KEY',
+    capabilities: {
+      text: true,
+      embedding: false,
+      mmEmbedding: false,
+    },
+    batchSize: 3,
+  },
+  // ... 10+ providers
 };
+```
+
+### Model Registry
+
+Models are defined in YAML and loaded via API:
+
+```yaml
+# src/config/models/model-registry.yaml
+openai:
+  text:
+    - id: gpt-4o
+      name: GPT-4o
+      type: text
+      apiMode: responses        # 'responses' or 'completions'
+      searchSupport: true       # Can use web search
+      searchBuiltIn: false      # Requires tool, not built-in
+      contextWindow: 128000
+      maxOutputTokens: 16384
+      recommended: true
+
+perplexity:
+  text:
+    - id: sonar-pro
+      name: Sonar Pro
+      type: text
+      searchSupport: true
+      searchBuiltIn: true       # Always searches, no tool needed
+      recommended: true
 ```
 
 ### Inference Function
 
 ```typescript
 // src/lib/ai-inference.ts
+
 export async function generateCompletion(
-  options: InferenceOptions
-): Promise<InferenceResult> {
-  const { model, provider, prompt, systemPrompt, apiKey } = options;
+  options: GenerateCompletionOptions
+): Promise<GenerateCompletionResult> {
+  const { prompt, model, provider, webSearch } = options;
 
-  // Route to correct SDK
-  switch (provider) {
-    case 'huggingface':
-      return hfInference(model, prompt, systemPrompt, apiKey);
-    case 'openai':
-    case 'anthropic':
-    case 'google':
-    case 'groq':
-    case 'mistral':
-    case 'cohere':
-      return aiSdkInference(provider, model, prompt, systemPrompt, apiKey);
-    // ...
-  }
-}
+  // Get AI SDK model with proper API routing
+  const aiModel = getAISDKModel(
+    provider.id,
+    model.id,
+    provider.apiKey,
+    modelConfig,
+    webSearch
+  );
 
-// Batch column generation
-export async function generateColumnData(
-  rows: Row[],
-  columnId: string,
-  promptTemplate: string,
-  model: string,
-  provider: ProviderKey,
-  onProgress?: (completed: number, total: number) => void
-): Promise<GenerationResult[]>;
-```
+  // Get web search tools if enabled
+  const tools = webSearch?.enabled
+    ? getWebSearchTools(provider.id, webSearch, provider.apiKey, modelConfig)
+    : undefined;
 
-### Error Classification
+  // Get provider-specific options (e.g., Perplexity location)
+  const providerOptions = provider.id === 'perplexity'
+    ? getPerplexityProviderOptions(webSearch)
+    : undefined;
 
-```typescript
-// src/lib/ai-inference.ts
-export function classifyError(error: any): FailureType {
-  const status = error?.status || error?.response?.status;
-  const message = error?.message?.toLowerCase() || '';
+  // Generate with Vercel AI SDK
+  const result = await generateText({
+    model: aiModel,
+    prompt,
+    temperature,
+    ...(tools && { tools, maxSteps: 3 }),
+    ...(providerOptions && { providerOptions }),
+  });
 
-  if (status === 429 || message.includes('rate limit')) return 'rate_limit';
-  if (status === 401 || status === 403) return 'auth';
-  if (status >= 500) return 'server_error';
-  if (message.includes('network') || message.includes('fetch')) return 'network';
-  return 'invalid_request';
+  // Extract sources from multiple locations
+  const sources = extractSources(result, provider.id);
+
+  return {
+    content: result.text,
+    sources,
+  };
 }
 ```
 
-### Embedding Generation
+### Web Search Configuration
 
 ```typescript
-// src/lib/ai-inference.ts
-export async function generateEmbeddings(
-  texts: string[],
-  provider: ProviderKey,
-  modelId: string,
-  apiKey: string
-): Promise<number[][]> {
-  switch (provider) {
-    case 'huggingface':
-      return hfEmbeddings(texts, modelId, apiKey);
-    case 'openai':
-      return openaiEmbeddings(texts, modelId, apiKey);
-    case 'google':
-      return googleEmbeddings(texts, modelId, apiKey);
-    // ...
+// src/types/web-search.ts
+
+export interface WebSearchConfig {
+  enabled: boolean;
+  contextSize: 'low' | 'medium' | 'high';
+  userLocation?: {
+    type: 'approximate';
+    city?: string;
+    region?: string;
+    country?: string;  // ISO code: IN, US, GB
+  };
+}
+
+export interface SearchSource {
+  url: string;
+  title?: string;
+  snippet?: string;
+}
+```
+
+### Source Extraction
+
+Sources are extracted from different locations based on provider:
+
+```typescript
+function extractSources(result: any, providerId: string): SearchSource[] {
+  const sources: SearchSource[] = [];
+
+  // Direct sources (Perplexity)
+  if (result.sources) {
+    sources.push(...result.sources.map(s => ({ url: s.url, title: s.title })));
   }
+
+  // Provider metadata - Perplexity
+  if (result.providerMetadata?.perplexity?.sources) {
+    sources.push(...result.providerMetadata.perplexity.sources);
+  }
+
+  // Provider metadata - OpenAI annotations
+  if (result.providerMetadata?.openai?.annotations) {
+    for (const ann of result.providerMetadata.openai.annotations) {
+      if (ann.type === 'url_citation') {
+        sources.push({ url: ann.url, title: ann.title });
+      }
+    }
+  }
+
+  // Tool results (OpenAI web_search_preview)
+  if (result.toolResults) {
+    for (const tr of result.toolResults) {
+      if (tr.toolName?.includes('search') && tr.result?.sources) {
+        sources.push(...tr.result.sources);
+      }
+    }
+  }
+
+  return sources;
 }
 ```
 
@@ -458,7 +584,7 @@ export const AI_COLUMN_TEMPLATES: ColumnTemplate[] = [
       { id: 'target_language', name: 'Target Language', default: 'Spanish' }
     ]
   },
-  // ... 8 templates total
+  // ... more templates
 ];
 ```
 
@@ -470,219 +596,21 @@ category: Transformation
 title: Translate Text
 prompt_params:
   system_instruction: |
-    You are a professional translator. Translate the given text
-    accurately while preserving tone and context.
+    You are a professional translator.
   prompt_template: |
-    Translate the following text to {{target_language}}:
-
+    Translate to {{target_language}}:
     {{input}}
 template_variables:
   - id: input
     display_name: Input Text
-    slug: input
     required: true
   - id: target_language
     display_name: Target Language
-    slug: target_language
-    required: true
     default: Spanish
 inference_config:
   generation:
     max_new_tokens: 1000
     temperature: 0.3
-```
-
-### Prompt Serialization
-
-```typescript
-// src/lib/prompt-serializer.ts
-
-// Convert TipTap document to template string
-export function serializePrompt(doc: TipTapDocument): string {
-  // Variable pill nodes → {{column_slug}}
-  // Text nodes → plain text
-}
-
-// Interpolate template with row data
-export function interpolatePrompt(
-  template: string,
-  row: Record<string, any>,
-  variableMap: Record<string, string>
-): string {
-  return template.replace(/\{\{(\w+)\}\}/g, (_, key) => {
-    const columnName = variableMap[key];
-    return row[columnName] ?? '';
-  });
-}
-```
-
----
-
-## Format Detection & Parsing
-
-### Detection Algorithm
-
-```typescript
-// src/lib/format-detector.ts
-export function detectFormat(content: string): DetectionResult {
-  const results: FormatScore[] = [];
-
-  // Try each format detector
-  results.push(detectMessageCentric(content));
-  results.push(detectLangfuse(content));
-  results.push(detectLangsmith(content));
-  results.push(detectArize(content));
-  results.push(detectCSV(content));
-
-  // Return highest confidence
-  results.sort((a, b) => b.confidence - a.confidence);
-  return {
-    format: results[0].format,
-    confidence: results[0].confidence,
-    alternatives: results.slice(1)
-  };
-}
-```
-
-### Parsing Pipeline
-
-```typescript
-// src/lib/format-parser.ts
-export function parseFileContent(
-  content: string,
-  format: SupportedFormat
-): NormalizedAgentData[] {
-  let parsed: any[];
-
-  switch (format) {
-    case 'message-centric':
-      parsed = parseJSONL(content);
-      break;
-    case 'langfuse':
-      parsed = parseLangfuse(content);  // Expands observations
-      break;
-    case 'langsmith':
-      parsed = parseLangsmith(content);
-      break;
-    case 'csv':
-      parsed = parseCSV(content);
-      break;
-    // ...
-  }
-
-  // Flatten all nested objects
-  return parsed.map(row => flattenObject(row));
-}
-
-// Memoized flattening
-const flattenCache = new LRUCache<string, Record<string, any>>(100);
-
-function flattenObject(
-  obj: any,
-  prefix = '',
-  depth = 0
-): Record<string, any> {
-  // Check cache
-  const cacheKey = JSON.stringify(obj) + prefix;
-  if (flattenCache.has(cacheKey)) {
-    return flattenCache.get(cacheKey)!;
-  }
-
-  // Flatten logic...
-  const result = { /* ... */ };
-  flattenCache.set(cacheKey, result);
-  return result;
-}
-```
-
----
-
-## Type Definitions
-
-### Core Data Types
-
-```typescript
-// src/types/agent-data.ts
-export type SupportedFormat =
-  | 'message-centric'
-  | 'langfuse'
-  | 'langsmith'
-  | 'arize'
-  | 'csv';
-
-export interface NormalizedAgentData {
-  [key: string]: string | number | boolean | null;
-}
-
-export interface AugmentedAgentData extends NormalizedAgentData {
-  _sentiment?: string;
-  _intent?: string;
-  _quality_score?: number;
-}
-```
-
-### AI Types
-
-```typescript
-// src/types/models.ts
-export interface Model {
-  id: string;
-  name: string;
-  author: string;
-  downloads: number;
-  likes: number;
-  tags: string[];
-}
-
-export interface InferenceOptions {
-  model: string;
-  provider: ProviderKey;
-  prompt: string;
-  systemPrompt?: string;
-  apiKey: string;
-  maxTokens?: number;
-  temperature?: number;
-}
-
-export interface InferenceResult {
-  content: string;
-  error?: string;
-  errorType?: FailureType;
-}
-```
-
-### Storage Types
-
-```typescript
-// src/lib/duckdb/types.ts
-export interface FileMetadata {
-  id: string;
-  name: string;
-  format: SupportedFormat;
-  size: number;
-  rowCount: number;
-  columnNames: string[];
-  createdAt: Date;
-  updatedAt: Date;
-  version: number;
-}
-
-export interface CellMetadata {
-  fileId: string;
-  rowId: number;
-  columnId: string;
-  status: 'pending' | 'completed' | 'failed';
-  failureType?: FailureType;
-  errorMessage?: string;
-  attempts: number;
-}
-
-export type FailureType =
-  | 'rate_limit'
-  | 'auth'
-  | 'server_error'
-  | 'network'
-  | 'invalid_request';
 ```
 
 ---
@@ -696,69 +624,80 @@ export type FailureType =
 ```typescript
 // Request
 {
-  fileId: string;
+  rows: Array<{ data: Record<string, any> }>;
   columnId: string;
-  model: string;
-  provider: ProviderKey;
   promptTemplate: string;
-  variableMap: Record<string, string>;
-  rows: Array<{ rowId: number; data: Record<string, any> }>;
-  apiKey: string;
+  model: { id: string; name: string };
+  provider: { id: string; apiKey: string };
+  columnReferences: string[];
+  outputSchema?: { mode: string; fields: SchemaField[] };
+  webSearch?: WebSearchConfig;
 }
 
-// Response
+// Response (streaming)
 {
-  results: Array<{
-    rowId: number;
-    value: string;
-    error?: string;
-    errorType?: FailureType;
-  }>;
+  type: 'result';
+  rowIndex: number;
+  content: string;
+  sources?: SearchSource[];
+  error?: string;
+  errorType?: string;
 }
 ```
 
-### Load Template
+### Model Registry
 
-**Endpoint**: `GET /api/prompts/[templateId]`
+**Endpoint**: `GET /api/model-registry`
 
-```typescript
-// Response
-{
-  category: string;
-  title: string;
-  prompt_params: {
-    system_instruction: string;
-    prompt_template: string;
-  };
-  template_variables: Array<{
-    id: string;
-    display_name: string;
-    slug: string;
-    required: boolean;
-    default?: string;
-  }>;
-  inference_config: {
-    generation: {
-      max_new_tokens: number;
-      temperature: number;
-    };
-  };
-}
-```
+Returns parsed YAML model definitions with provider injection.
 
 ### Provider Config
 
 **Endpoint**: `GET/POST /api/provider-config`
 
+Reads/writes `provider-config.json` with API keys and capabilities.
+
+---
+
+## Type Definitions
+
+### Core Types
+
 ```typescript
-// Response (GET)
-{
-  providers: Record<ProviderKey, {
-    enabled: boolean;
-    apiKey: string;
-  }>;
-  defaultTextProvider: ProviderKey;
-  defaultEmbeddingProvider: ProviderKey;
+// src/types/models.ts
+export interface Model {
+  id: string;
+  name: string;
+  provider: string;
+  searchSupport?: boolean;
+  searchBuiltIn?: boolean;
+  apiMode?: 'responses' | 'completions';
+}
+
+export interface ModelProvider {
+  id: string;
+  name: string;
+  displayName: string;
+  apiKey: string;
+}
+
+// src/types/web-search.ts
+export interface WebSearchConfig {
+  enabled: boolean;
+  contextSize: SearchContextSize;
+  userLocation?: UserLocation;
+}
+
+// src/lib/duckdb/types.ts
+export interface CellMetadata {
+  fileId: string;
+  columnId: string;
+  rowIndex: number;
+  status: 'pending' | 'success' | 'failed';
+  error?: string;
+  errorType?: string;
+  edited: boolean;
+  sources?: Array<{ url: string; title?: string }>;
 }
 ```
 
@@ -782,35 +721,9 @@ src/
 ### Running Tests
 
 ```bash
-# All tests
-npm test
-
-# Watch mode
-npm run test:watch
-
-# Specific file
-npm test -- src/lib/__tests__/format-parser.test.ts
-
-# Coverage
-npm test -- --coverage
-```
-
-### Test Patterns
-
-```typescript
-// Unit test example
-describe('flattenObject', () => {
-  it('flattens nested objects with dot notation', () => {
-    const input = { user: { name: 'Alice' } };
-    const result = flattenObject(input);
-    expect(result).toEqual({ 'user.name': 'Alice' });
-  });
-});
-
-// Mock DuckDB for storage tests
-jest.mock('../duckdb/client', () => ({
-  getDatabase: jest.fn(() => mockDatabase)
-}));
+npm test                    # All tests
+npm run test:watch          # Watch mode
+npm test -- --coverage      # With coverage
 ```
 
 ---
@@ -818,175 +731,84 @@ jest.mock('../duckdb/client', () => ({
 ## Development Commands
 
 ```bash
-# Start development server
-npm run dev
-
-# Build for production
-npm run build
-npm start
-
-# Linting
-npm run lint
-
-# Type checking
-npx tsc --noEmit
+npm run dev          # Start development server
+npm run build        # Production build
+npm start            # Run production build
+npm run lint         # ESLint
+npx tsc --noEmit     # Type checking
 ```
 
 ---
 
-## Performance Optimizations
+## Environment Variables
 
-### Parser Memoization
-- LRU cache (100 entries) for `flattenObject()`
-- Prevents re-flattening same objects
-
-### DuckDB Queries
-- Pagination (100 rows/page default)
-- SQL-level filtering and sorting
-- Indexed by file_id for fast lookups
-
-### Lazy Loading
-- Embedding-atlas loaded dynamically
-- Heavy visualizations only when needed
-
-### Debouncing
-- Search inputs: 300ms debounce
-- Filter changes: 300ms debounce
-
-### Batch Processing
-- AI inference batched per column
-- Embedding generation in chunks
-
----
-
-## Error Handling
-
-### Inference Errors
-
-```typescript
-// Retry logic in RetryModal.tsx
-const handleRetry = async () => {
-  const result = await generateCompletion({
-    ...options,
-    // Optionally different model/provider
-  });
-
-  if (result.error) {
-    await saveCellMetadata(fileId, rowId, columnId, {
-      status: 'failed',
-      failureType: result.errorType,
-      errorMessage: result.error,
-      attempts: attempts + 1
-    });
-  } else {
-    await saveCellMetadata(fileId, rowId, columnId, {
-      status: 'completed',
-      attempts: attempts + 1
-    });
-  }
-};
-```
-
-### User Feedback
-- Toast notifications via Sonner
-- Cell-level status indicators
-- Detailed error messages in modals
-
----
-
-## Environment Configuration
-
-### Required Environment Variables
-
-None required for basic functionality. Provider API keys can be:
-1. Entered in the UI (stored in browser)
-2. Set as environment variables:
+Provider API keys can be set as environment variables:
 
 ```bash
 OPENAI_API_KEY=sk-...
 ANTHROPIC_API_KEY=sk-ant-...
 GOOGLE_AI_API_KEY=...
+PERPLEXITY_API_KEY=pplx-...
 HUGGINGFACE_API_KEY=hf_...
 ```
+
+Or configured via UI (stored in `provider-config.json`, gitignored).
+
+---
+
+## Known Issues
+
+### Search-Preview Models
+
+Models like `gpt-4o-search-preview` don't work due to an AI SDK bug parsing the `annotations` field in ChatCompletions responses.
+
+**Workaround**: Use Responses API models with `web_search_preview` tool or Perplexity with built-in search.
+
+Tracked at: https://github.com/vercel/ai/issues/5834
+
+---
+
+## Performance Optimizations
+
+- **Parser Memoization**: LRU cache for `flattenObject()`
+- **DuckDB Queries**: SQL-level pagination, filtering, sorting
+- **Lazy Loading**: Heavy components loaded dynamically
+- **Debouncing**: 300ms for search/filter inputs
+- **Batch Processing**: AI inference and DuckDB updates batched
 
 ---
 
 ## Browser Compatibility
 
-- **Chrome** 90+
-- **Firefox** 90+
-- **Safari** 14+
-- **Edge** 90+
+- Chrome 90+
+- Firefox 90+
+- Safari 14+
+- Edge 90+
 
-Requires:
-- IndexedDB support
-- Web Workers
-- ES2020+ features
-
----
-
-## Limitations
-
-### Current
-- No Web Worker support for parsing (large files may block UI)
-- No virtual scrolling (10k+ rows slow)
-- DuckDB WASM startup time (~2-3s)
-- 50MB file size limit (IndexedDB)
-
-### Planned Improvements
-- Web Workers for file parsing
-- Virtual scrolling for large datasets
-- Streaming file processing
-- OAuth for provider authentication
+Requires: IndexedDB, Web Workers, ES2020+
 
 ---
 
 ## Contributing
 
-### Code Style
-- TypeScript strict mode
-- Prefer `@/` path aliases
-- Component composition over inheritance
-- Memoization for expensive operations
+### Adding a New Provider
 
-### Adding Features
-1. Add types to `src/types/`
-2. Add logic to `src/lib/`
-3. Add UI to `src/components/`
-4. Write tests in `__tests__/`
+1. Add to `ProviderKey` type in `src/types/models.ts`
+2. Add settings in `src/config/provider-settings.ts`
+3. Add SDK import in `src/lib/ai-inference.ts`
+4. Add models in `src/config/models/model-registry.yaml`
+5. Handle in `getAISDKModel()` switch statement
 
-### Adding Providers
-1. Add to `ProviderKey` type
-2. Add metadata to `PROVIDER_META`
-3. Add inference logic to `generateCompletion()`
-4. Add embedding logic if supported
+### Adding Web Search Support
 
-### Adding Data Formats
+1. Set `searchSupport: true` in model registry
+2. If tool-based: implement in `getWebSearchTools()`
+3. If built-in: add source extraction logic
+4. Update `getPerplexityProviderOptions()` if needed
+
+### Adding a Data Format
+
 1. Add to `SupportedFormat` type
-2. Add detector to `format-detector.ts`
-3. Add parser to `format-parser.ts`
-4. Add sample file to `public/`
-
----
-
-## File Reference
-
-### Entry Points
-- `src/app/page.tsx` - Home page
-- `src/app/edit/[fileId]/page.tsx` - Editor
-- `src/app/layout.tsx` - Root layout
-
-### Key Components
-- `src/components/spreadsheet/SpreadsheetEditor.tsx` - Main editor
-- `src/components/spreadsheet/AddColumnModal.tsx` - AI workflow
-- `src/components/embedding-viewer/embedding-wizard.tsx` - Embeddings
-
-### Core Logic
-- `src/lib/ai-inference.ts` - LLM integration
-- `src/lib/format-parser.ts` - Data parsing
-- `src/lib/duckdb/index.ts` - Database operations
-
-### Configuration
-- `src/config/ai-column-templates.ts` - Templates
-- `src/config/provider-settings.ts` - Providers
-- `src/config/parser.config.ts` - Parser limits
+2. Add detector in `format-detector.ts`
+3. Add parser in `format-parser.ts`
+4. Test with sample file
