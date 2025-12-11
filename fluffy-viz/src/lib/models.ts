@@ -125,7 +125,11 @@ function convertModelConfigToModel(modelConfig: ModelConfig, provider: string): 
     category: modelConfig.recommended ? 'recommended' : 'all',
     provider: provider,
     contextLength: modelConfig.contextWindow,
-    tags: [provider, modelConfig.type]
+    tags: [provider, modelConfig.type],
+    // Web search capabilities
+    searchSupport: modelConfig.searchSupport,
+    searchBuiltIn: modelConfig.searchBuiltIn,
+    apiMode: modelConfig.apiMode
   }
 }
 

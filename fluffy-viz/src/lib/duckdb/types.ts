@@ -108,6 +108,20 @@ export type RowData = Record<string, unknown>;
 export type ColumnType = 'data' | 'ai-generated' | 'computed';
 
 /**
+ * Web search configuration stored with column metadata
+ */
+export interface StoredWebSearchConfig {
+  enabled: boolean;
+  contextSize: 'low' | 'medium' | 'high';
+  userLocation?: {
+    type: 'approximate';
+    city?: string;
+    region?: string;
+    country?: string;
+  };
+}
+
+/**
  * Column metadata for AI-generated or computed columns
  */
 export interface ColumnMetadata {
@@ -120,6 +134,10 @@ export interface ColumnMetadata {
   prompt?: string;
   createdAt?: number;
   outputSchema?: OutputSchema;  // Schema for structured output
+  webSearchEnabled?: boolean;   // Whether web search was enabled for this column
+  webSearchConfig?: StoredWebSearchConfig;  // Full web search configuration
+  temperature?: number;         // Generation temperature
+  maxTokens?: number;           // Max tokens for generation
 }
 
 /**
@@ -138,6 +156,15 @@ export type FailureType =
 export type CellStatus = 'pending' | 'success' | 'failed';
 
 /**
+ * Search source from web search
+ */
+export interface StoredSearchSource {
+  url: string;
+  title?: string;
+  snippet?: string;
+}
+
+/**
  * Cell metadata for AI-generated cells
  */
 export interface CellMetadata {
@@ -150,4 +177,5 @@ export interface CellMetadata {
   edited: boolean;
   originalValue?: string;
   lastEditTime?: number;
+  sources?: StoredSearchSource[];  // Web search sources used for this cell
 }

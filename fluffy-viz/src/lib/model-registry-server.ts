@@ -21,6 +21,10 @@ const ModelConfigSchema = z.object({
   dimensions: z.number().optional(),
   description: z.string().optional(),
   recommended: z.boolean().optional().default(false),
+  // Web search fields
+  apiMode: z.enum(['responses', 'completions']).optional(),
+  searchSupport: z.boolean().optional().default(false),
+  searchBuiltIn: z.boolean().optional().default(false),
 })
 
 const ProviderModelsSchema = z.object({

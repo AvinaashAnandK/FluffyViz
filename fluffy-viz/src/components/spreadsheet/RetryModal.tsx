@@ -17,11 +17,13 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
-import { AlertCircle } from 'lucide-react';
+import { AlertCircle, Globe, Lock } from 'lucide-react';
 import type { FewShotExample } from '@/lib/few-shot-sampling';
 import { ModelSelector } from './ModelSelector';
 import { ProviderSelector } from './ProviderSelector';
+import { GenerationSettings } from './GenerationSettings';
 import { loadProviderSettings, getEnabledProviders, type ProviderSettings } from '@/config/provider-settings';
+import type { WebSearchConfig } from '@/types/web-search';
 
 import type { Model, ModelProvider } from '@/types/models';
 
@@ -43,6 +45,12 @@ export interface RetryModalProps {
   currentModel?: Model;
   currentProvider?: ModelProvider;
   onModelChange?: (model: Model, provider: ModelProvider) => void;
+  /** Original web search config (locked - cannot change enabled state) */
+  webSearchConfig?: WebSearchConfig;
+  /** Original temperature setting */
+  temperature?: number;
+  /** Original maxTokens setting */
+  maxTokens?: number;
 }
 
 export interface RetryOptions {
@@ -52,6 +60,10 @@ export interface RetryOptions {
   fewShotCount: number;
   model?: Model;
   provider?: ModelProvider;
+  /** Web search configuration (enabled state is preserved from original) */
+  webSearch?: WebSearchConfig;
+  temperature?: number;
+  maxTokens?: number;
 }
 
 type RetryScope = 'failed' | 'failed-edited' | 'all';
@@ -178,6 +190,9 @@ export function RetryModal({
   hasRateLimitErrors = false,
   currentModel,
   currentProvider,
+  webSearchConfig,
+  temperature: initialTemperature = 0.7,
+  maxTokens: initialMaxTokens = 500,
 }: RetryModalProps) {
   const [scope, setScope] = useState<RetryScope>('failed');
   const [includeFewShot, setIncludeFewShot] = useState(true);
@@ -187,6 +202,15 @@ export function RetryModal({
   const [selectedModel, setSelectedModel] = useState<Model | undefined>(currentModel);
   const [selectedProvider, setSelectedProvider] = useState<ModelProvider | undefined>(currentProvider);
   const [providerConfig, setProviderConfig] = useState<ProviderSettings | null>(null);
+
+  // Generation settings (web search enabled state is locked)
+  const [temperature, setTemperature] = useState(initialTemperature);
+  const [maxTokens, setMaxTokens] = useState(initialMaxTokens);
+  const [currentWebSearchConfig, setCurrentWebSearchConfig] = useState<WebSearchConfig>(
+    webSearchConfig || { enabled: false, contextSize: 'medium' }
+  );
+
+  const webSearchEnabled = webSearchConfig?.enabled ?? false;
 
   // Load provider configuration
   useEffect(() => {
@@ -240,6 +264,9 @@ export function RetryModal({
         fewShotCount,
         model: modelToUse,
         provider: providerToUse,
+        webSearch: webSearchEnabled ? currentWebSearchConfig : undefined,
+        temperature,
+        maxTokens,
       });
       onClose();
     } catch (error) {
@@ -350,6 +377,38 @@ export function RetryModal({
                 </div>
               </div>
             )}
+          </div>
+
+          {/* Generation Settings */}
+          <div className="space-y-3">
+            <h3 className="font-semibold text-sm">Generation Settings:</h3>
+
+            {/* Web Search Status (locked) */}
+            {webSearchEnabled && (
+              <div className="flex items-center gap-2 p-3 bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800 rounded-md">
+                <Globe className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                <span className="text-sm text-blue-700 dark:text-blue-300">
+                  Web search enabled
+                </span>
+                <Lock className="h-3 w-3 text-blue-500 dark:text-blue-400 ml-auto" />
+                <span className="text-xs text-blue-500 dark:text-blue-400">
+                  Cannot be changed
+                </span>
+              </div>
+            )}
+
+            {/* Generation Settings Component */}
+            <div className="border rounded-md p-4">
+              <GenerationSettings
+                temperature={temperature}
+                maxTokens={maxTokens}
+                webSearchEnabled={webSearchEnabled}
+                webSearchConfig={currentWebSearchConfig}
+                onTemperatureChange={setTemperature}
+                onMaxTokensChange={setMaxTokens}
+                onWebSearchConfigChange={setCurrentWebSearchConfig}
+              />
+            </div>
           </div>
 
           {/* Few-shot examples */}

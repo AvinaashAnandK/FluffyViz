@@ -62,12 +62,9 @@ Supported providers:
 - `anthropic` - Anthropic (Claude)
 - `cohere` - Cohere (Command, Embed)
 - `groq` - Groq (fast Llama inference)
-- `together` - Together AI
-- `novita` - Novita AI
 - `huggingface` - HuggingFace Inference API
 - `google` - Google AI (Gemini)
 - `mistral` - Mistral AI
-- `local` - Local LLM server (Ollama, LM Studio)
 
 ### Capabilities
 
@@ -130,28 +127,6 @@ git check-ignore provider-config.json
 ```
 
 ## Advanced Usage
-
-### Local LLM Setup
-
-For local models (Ollama, LM Studio):
-
-```json
-{
-  "providers": {
-    "local": {
-      "apiKey": "",  // Not required for local
-      "enabled": true,
-      "capabilities": {
-        "text": true,
-        "image": false,
-        "embedding": false,
-        "mmEmbedding": false
-      },
-      "baseUrl": "http://localhost:11434"  // Ollama default
-    }
-  }
-}
-```
 
 ### Custom Base URLs
 
@@ -278,6 +253,20 @@ git rm --cached provider-config.json
 # Verify it's gitignored
 git check-ignore provider-config.json
 ```
+
+## Known Issues
+
+### OpenAI Search-Preview Models Not Supported
+
+**Issue:** Models with built-in web search (`gpt-4o-search-preview`, `gpt-4o-mini-search-preview`, `gpt-5-search-api`) return invalid responses.
+
+**Cause:** The Vercel AI SDK (`@ai-sdk/openai`) cannot parse the `annotations` field that OpenAI returns in ChatCompletions responses for search-preview models. This is a known SDK bug tracked at: https://github.com/vercel/ai/issues/5834
+
+**Workaround:** These models have been removed from the model registry. Instead, use:
+- **Responses API models** (GPT-4o, GPT-4.1, GPT-5) with the `web_search_preview` tool enabled
+- **Perplexity models** (Sonar, Sonar Pro) which have built-in web search
+
+**Status:** Waiting for AI SDK fix. The Responses API web search works correctly.
 
 ## API Reference
 

@@ -76,6 +76,10 @@ export async function initializeSchema(): Promise<void> {
         prompt TEXT,
         created_at BIGINT,
         output_schema TEXT,
+        web_search_enabled BOOLEAN DEFAULT FALSE,
+        web_search_config TEXT,
+        temperature DOUBLE,
+        max_tokens INTEGER,
         PRIMARY KEY (file_id, column_id)
       )
     `);
@@ -109,6 +113,22 @@ export async function initializeSchema(): Promise<void> {
         await executeQuery(`ALTER TABLE column_metadata ADD COLUMN output_schema TEXT`);
         console.log('[DuckDB Schema] ✓ Output schema migration completed');
       }
+
+      // Migration: Add web search columns if they don't exist
+      const webSearchColumns = await executeQuery<{ column_name: string }>(`
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = 'column_metadata'
+          AND column_name = 'web_search_enabled'
+      `);
+
+      if (webSearchColumns.length === 0) {
+        await executeQuery(`ALTER TABLE column_metadata ADD COLUMN web_search_enabled BOOLEAN DEFAULT FALSE`);
+        await executeQuery(`ALTER TABLE column_metadata ADD COLUMN web_search_config TEXT`);
+        await executeQuery(`ALTER TABLE column_metadata ADD COLUMN temperature DOUBLE`);
+        await executeQuery(`ALTER TABLE column_metadata ADD COLUMN max_tokens INTEGER`);
+        console.log('[DuckDB Schema] ✓ Web search columns migration completed');
+      }
     } catch (error: any) {
       console.error('[DuckDB Schema] Column name migration error:', error);
       // Try to recreate the table with the correct schema
@@ -126,6 +146,10 @@ export async function initializeSchema(): Promise<void> {
             prompt TEXT,
             created_at BIGINT,
             output_schema TEXT,
+            web_search_enabled BOOLEAN DEFAULT FALSE,
+            web_search_config TEXT,
+            temperature DOUBLE,
+            max_tokens INTEGER,
             PRIMARY KEY (file_id, column_id)
           )
         `);
@@ -147,10 +171,28 @@ export async function initializeSchema(): Promise<void> {
         edited BOOLEAN DEFAULT FALSE,
         original_value TEXT,
         last_edit_time BIGINT,
+        sources TEXT,
         PRIMARY KEY (file_id, column_id, row_index)
       )
     `);
     console.log('[DuckDB Schema] ✓ Cell metadata table created');
+
+    // Migration: Add sources column to cell_metadata if it doesn't exist
+    try {
+      const sourcesColumn = await executeQuery<{ column_name: string }>(`
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = 'cell_metadata'
+          AND column_name = 'sources'
+      `);
+
+      if (sourcesColumn.length === 0) {
+        await executeQuery(`ALTER TABLE cell_metadata ADD COLUMN sources TEXT`);
+        console.log('[DuckDB Schema] ✓ Sources column migration completed');
+      }
+    } catch (error: any) {
+      console.warn('[DuckDB Schema] Sources column migration error:', error);
+    }
 
     // Create view for embedding visualization with x, y columns
     // This view extracts array elements for embedding-atlas compatibility

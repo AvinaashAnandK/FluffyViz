@@ -370,8 +370,8 @@ export async function tableExists(fileId: string): Promise<boolean> {
 export async function saveColumnMetadata(metadata: ColumnMetadata): Promise<void> {
   await executeQuery(
     `INSERT OR REPLACE INTO column_metadata
-     (file_id, column_id, column_name, column_type, model, provider, prompt, created_at, output_schema)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     (file_id, column_id, column_name, column_type, model, provider, prompt, created_at, output_schema, web_search_enabled, web_search_config, temperature, max_tokens)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       metadata.fileId,
       metadata.columnId,
@@ -381,7 +381,11 @@ export async function saveColumnMetadata(metadata: ColumnMetadata): Promise<void
       metadata.provider || null,
       metadata.prompt || null,
       metadata.createdAt || Date.now(),
-      metadata.outputSchema ? JSON.stringify(metadata.outputSchema) : null
+      metadata.outputSchema ? JSON.stringify(metadata.outputSchema) : null,
+      metadata.webSearchEnabled ?? false,
+      metadata.webSearchConfig ? JSON.stringify(metadata.webSearchConfig) : null,
+      metadata.temperature ?? null,
+      metadata.maxTokens ?? null
     ]
   );
 
@@ -405,6 +409,10 @@ export async function getColumnMetadata(
     prompt: string | null;
     created_at: number | null;
     output_schema: string | null;
+    web_search_enabled: boolean | null;
+    web_search_config: string | null;
+    temperature: number | null;
+    max_tokens: number | null;
   }>(
     `SELECT * FROM column_metadata WHERE file_id = ? AND column_id = ?`,
     [fileId, columnId]
@@ -423,6 +431,10 @@ export async function getColumnMetadata(
     prompt: row.prompt || undefined,
     createdAt: row.created_at || undefined,
     outputSchema: row.output_schema ? JSON.parse(row.output_schema) : undefined,
+    webSearchEnabled: row.web_search_enabled ?? undefined,
+    webSearchConfig: row.web_search_config ? JSON.parse(row.web_search_config) : undefined,
+    temperature: row.temperature ?? undefined,
+    maxTokens: row.max_tokens ?? undefined,
   };
 }
 
@@ -440,6 +452,10 @@ export async function getAllColumnMetadata(fileId: string): Promise<ColumnMetada
     prompt: string | null;
     created_at: number | null;
     output_schema: string | null;
+    web_search_enabled: boolean | null;
+    web_search_config: string | null;
+    temperature: number | null;
+    max_tokens: number | null;
   }>(
     `SELECT * FROM column_metadata WHERE file_id = ? ORDER BY created_at`,
     [fileId]
@@ -455,6 +471,10 @@ export async function getAllColumnMetadata(fileId: string): Promise<ColumnMetada
     prompt: row.prompt || undefined,
     createdAt: row.created_at || undefined,
     outputSchema: row.output_schema ? JSON.parse(row.output_schema) : undefined,
+    webSearchEnabled: row.web_search_enabled ?? undefined,
+    webSearchConfig: row.web_search_config ? JSON.parse(row.web_search_config) : undefined,
+    temperature: row.temperature ?? undefined,
+    maxTokens: row.max_tokens ?? undefined,
   }));
 }
 
@@ -483,8 +503,8 @@ export async function deleteColumnMetadata(
 export async function saveCellMetadata(metadata: CellMetadata): Promise<void> {
   await executeQuery(
     `INSERT OR REPLACE INTO cell_metadata
-     (file_id, column_id, row_index, status, error, error_type, edited, original_value, last_edit_time)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     (file_id, column_id, row_index, status, error, error_type, edited, original_value, last_edit_time, sources)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       metadata.fileId,
       metadata.columnId,
@@ -494,7 +514,8 @@ export async function saveCellMetadata(metadata: CellMetadata): Promise<void> {
       metadata.errorType || null,
       metadata.edited,
       metadata.originalValue || null,
-      metadata.lastEditTime || null
+      metadata.lastEditTime || null,
+      metadata.sources ? JSON.stringify(metadata.sources) : null
     ]
   );
 }
@@ -517,6 +538,7 @@ export async function getCellMetadata(
     edited: boolean;
     original_value: string | null;
     last_edit_time: number | null;
+    sources: string | null;
   }>(
     `SELECT * FROM cell_metadata WHERE file_id = ? AND column_id = ? AND row_index = ?`,
     [fileId, columnId, rowIndex]
@@ -535,6 +557,7 @@ export async function getCellMetadata(
     edited: row.edited,
     originalValue: row.original_value || undefined,
     lastEditTime: row.last_edit_time || undefined,
+    sources: row.sources ? JSON.parse(row.sources) : undefined,
   };
 }
 
@@ -555,6 +578,7 @@ export async function getColumnCellMetadata(
     edited: boolean;
     original_value: string | null;
     last_edit_time: number | null;
+    sources: string | null;
   }>(
     `SELECT * FROM cell_metadata WHERE file_id = ? AND column_id = ? ORDER BY row_index`,
     [fileId, columnId]
@@ -570,6 +594,7 @@ export async function getColumnCellMetadata(
     edited: row.edited,
     originalValue: row.original_value || undefined,
     lastEditTime: row.last_edit_time || undefined,
+    sources: row.sources ? JSON.parse(row.sources) : undefined,
   }));
 }
 
@@ -587,6 +612,7 @@ export async function getAllCellMetadata(fileId: string): Promise<CellMetadata[]
     edited: boolean;
     original_value: string | null;
     last_edit_time: number | null;
+    sources: string | null;
   }>(
     `SELECT * FROM cell_metadata WHERE file_id = ? ORDER BY column_id, row_index`,
     [fileId]
@@ -602,6 +628,7 @@ export async function getAllCellMetadata(fileId: string): Promise<CellMetadata[]
     edited: row.edited,
     originalValue: row.original_value || undefined,
     lastEditTime: row.last_edit_time || undefined,
+    sources: row.sources ? JSON.parse(row.sources) : undefined,
   }));
 }
 
@@ -618,12 +645,12 @@ export async function batchSaveCellMetadata(
   try {
     // Build VALUES clause
     const values = metadata.map(m =>
-      `(${formatValue(m.fileId)}, ${formatValue(m.columnId)}, ${m.rowIndex}, ${formatValue(m.status)}, ${formatValue(m.error || null)}, ${formatValue(m.errorType || null)}, ${m.edited ? 'TRUE' : 'FALSE'}, ${formatValue(m.originalValue || null)}, ${formatValue(m.lastEditTime || null)})`
+      `(${formatValue(m.fileId)}, ${formatValue(m.columnId)}, ${m.rowIndex}, ${formatValue(m.status)}, ${formatValue(m.error || null)}, ${formatValue(m.errorType || null)}, ${m.edited ? 'TRUE' : 'FALSE'}, ${formatValue(m.originalValue || null)}, ${formatValue(m.lastEditTime || null)}, ${formatValue(m.sources ? JSON.stringify(m.sources) : null)})`
     ).join(',\n');
 
     await conn.query(`
       INSERT OR REPLACE INTO cell_metadata
-      (file_id, column_id, row_index, status, error, error_type, edited, original_value, last_edit_time)
+      (file_id, column_id, row_index, status, error, error_type, edited, original_value, last_edit_time, sources)
       VALUES ${values}
     `);
 

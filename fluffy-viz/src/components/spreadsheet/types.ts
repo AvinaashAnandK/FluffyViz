@@ -1,4 +1,5 @@
 import { Model, ModelProvider } from '@/types/models'
+import type { WebSearchConfig } from '@/types/web-search'
 
 export interface Column {
   id: string
@@ -8,7 +9,7 @@ export interface Column {
   model?: Model
   provider?: ModelProvider
   prompt?: string
-  searchWeb?: boolean
+  webSearch?: WebSearchConfig
 }
 
 export interface SpreadsheetData {

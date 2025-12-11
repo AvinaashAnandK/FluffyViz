@@ -12,6 +12,10 @@ export interface Model {
   contextLength?: number
   createdAt?: string
   updatedAt?: string
+  // Web search capabilities
+  searchSupport?: boolean
+  searchBuiltIn?: boolean
+  apiMode?: 'responses' | 'completions'
 }
 
 export interface ModelProvider {

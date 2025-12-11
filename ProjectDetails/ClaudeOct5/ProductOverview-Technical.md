@@ -2,9 +2,9 @@
 
 ## Architecture Summary
 
-FluffyViz is a Next.js 14 (App Router) application with React 19, TypeScript, and Tailwind CSS v4. It's a local-first web app using IndexedDB for persistence, with no backend server—all data processing happens client-side.
+FluffyViz is a Next.js 15 (App Router) application with React 19, TypeScript, and Tailwind CSS v4. It's a local-first web app using DuckDB WASM for persistence, with API routes only for AI inference.
 
-**Tech Stack**: Next.js 14 | React 19 | TypeScript | Tailwind CSS v4 | IndexedDB | shadcn/ui
+**Tech Stack**: Next.js 15 | React 19 | TypeScript | Tailwind CSS v4 | DuckDB WASM | shadcn/ui | Vercel AI SDK
 
 ---
 
@@ -105,16 +105,31 @@ Spreadsheet table with editable cells, column visibility toggling, and horizonta
 **Dependencies**: `Table` UI components, `SpreadsheetData` types
 
 #### `/src/components/spreadsheet/AddColumnModal.tsx` - **AddColumnModal**
-Side drawer for configuring AI-powered columns. Includes template selection, model/provider pickers, and prompt editor.
+Side drawer for configuring AI-powered columns. Includes template selection, model/provider pickers, prompt editor, and web search settings.
 
 **Exports**: `AddColumnModal`
 **Key Features**:
 - AI column template selection
 - Model search and selection (HuggingFace integration)
 - Provider selection with compatibility filtering
+- Web search toggle with automatic model/provider filtering
+- Generation settings (temperature, maxTokens, search context size)
 - Prompt interpolation preview
+- Structured output schema builder
 
-**Dependencies**: `ModelSelector`, `ProviderSelector`, `COLUMN_TEMPLATES`, `loadPromptConfig`
+**Dependencies**: `ModelSelector`, `ProviderSelector`, `GenerationSettings`, `PromptComposer`
+
+#### `/src/components/spreadsheet/GenerationSettings.tsx` - **GenerationSettings**
+Component for configuring AI generation parameters.
+
+**Exports**: `GenerationSettings`
+**Key Features**:
+- Temperature slider (0-2)
+- Max tokens input (1-8192)
+- Web search context size (low/medium/high)
+- Optional user location for localized search
+
+**Dependencies**: `Slider`, `Input`, `Select`
 
 #### `/src/components/spreadsheet/ModelSelector.tsx` - **ModelSelector**
 Searchable dropdown for selecting AI models (100+ from HuggingFace + recommended models).
@@ -222,22 +237,41 @@ Processes and normalizes raw data to standardized schema.
 
 ### **AI/ML**
 
-#### `/src/lib/ai-inference.ts` - **generateCompletion**, **generateColumnData**
-AI inference interface (currently mock implementation).
+#### `/src/lib/ai-inference.ts` - **generateCompletion**, **generateStructuredCompletion**
+AI inference interface using Vercel AI SDK with multi-provider support.
 
 **Exports**:
-- `generateCompletion(options: InferenceOptions): Promise<InferenceResult>`
-- `generateColumnData(rows: any[], options: InferenceOptions): Promise<string[]>`
-- `InferenceOptions`, `InferenceResult` types
+- `generateCompletion(options, modelConfig): Promise<InferenceResult>`
+- `generateStructuredCompletion(options, modelConfig): Promise<InferenceResult>`
+- `interpolatePromptForRow(prompt, row): string`
+- `getWebSearchTools(providerId, modelConfig, webSearch): ToolSet`
 
 **Features**:
-- Mock responses with realistic delays (500-1500ms)
-- Placeholder for real API integration (OpenAI SDK, Anthropic SDK, etc.)
-- Row-by-row processing with prompt interpolation
+- Multi-provider support: OpenAI, Anthropic, Google, Groq, Cohere, Mistral, Perplexity
+- Text and structured output modes
+- Web search augmentation (OpenAI webSearchPreview, Google googleSearch, Perplexity native)
+- OpenAI Responses API support for search-preview models
+- Error classification for rate limits, auth failures, network issues
 
-**Status**: 🚧 **Mock implementation - needs real API integration**
+**Dependencies**: `@ai-sdk/openai`, `@ai-sdk/anthropic`, `@ai-sdk/google`, `@ai-sdk/perplexity`, `ai`
 
-**Dependencies**: `Model` types, `COLUMN_TEMPLATES`
+#### `/src/lib/error-messages.ts` - **Error Display**
+User-facing error messages for AI and web search errors.
+
+**Exports**:
+- `WEB_SEARCH_ERROR_MESSAGES` - Search-specific error messages
+- `AI_ERROR_MESSAGES` - Standard AI error messages
+- `formatErrorMessage(errorType)` - Get user-friendly message
+- `isRetryableError(errorType)` - Check if error is retryable
+
+#### `/src/types/web-search.ts` - **Web Search Types**
+Type definitions for web search configuration.
+
+**Exports**:
+- `WebSearchConfig` - Configuration (enabled, contextSize, userLocation)
+- `SearchSource` - Source citation (url, title, snippet)
+- `SearchContextSize` - 'low' | 'medium' | 'high'
+- `WebSearchErrorType` - Search-specific error types
 
 #### `/src/lib/models.ts` - **searchModels**, **getModelById**, **RECOMMENDED_MODELS**
 Model management and HuggingFace API integration.
@@ -260,7 +294,7 @@ Model management and HuggingFace API integration.
 Inference provider configuration and compatibility mapping.
 
 **Exports**:
-- `INFERENCE_PROVIDERS: ModelProvider[]` (Groq, Together AI, Novita, OpenAI, Anthropic, Cohere)
+- `INFERENCE_PROVIDERS: ModelProvider[]` (OpenAI, Anthropic, Google, Groq, Cohere, Mistral, Perplexity)
 - `getCompatibleProviders(modelId: string): ModelProvider[]`
 - `getDefaultProviderForModel(modelId: string): ModelProvider | null`
 
@@ -268,8 +302,36 @@ Inference provider configuration and compatibility mapping.
 - Provider metadata (name, description, base URL, supported models)
 - Auto-filtering by model compatibility
 - Default provider suggestions
+- Web search capability detection
 
 **Dependencies**: `ModelProvider` types
+
+#### `/src/lib/model-registry-server.ts` - **Model Registry**
+Server-side model configuration loaded from YAML.
+
+**Exports**:
+- `loadModelRegistryServer()` - Load and cache model registry
+- `getModelById(modelId)` - Get model configuration
+- `getAllModels()` - Get all registered models
+
+**Model Fields**:
+- `id`, `name`, `provider`, `contextWindow`, `inputCost`, `outputCost`
+- `apiMode` - 'responses' | 'completions' (for OpenAI)
+- `searchSupport` - Whether model supports web search tools
+- `searchBuiltIn` - Whether search is always-on (Perplexity)
+
+**Configuration**: `src/config/models/model-registry.yaml`
+
+#### `/src/config/provider-settings.ts` - **Provider Configuration**
+Provider API key management and settings.
+
+**Exports**:
+- `ProviderKey` - Union type of supported providers
+- `PROVIDER_META` - Provider metadata (label, envVar, link)
+- `getProviderApiKey(config, providerId)` - Get API key
+- `isProviderEnabled(config, providerId)` - Check if provider is configured
+
+**Dependencies**: `provider-config.json` (local file with API keys)
 
 ---
 
@@ -552,24 +614,50 @@ Tab 2: useEffect listener
 
 ---
 
+## DuckDB Storage Layer
+
+#### `/src/lib/duckdb/` - **DuckDB WASM Storage**
+Browser-based SQL database for data persistence.
+
+**Key Files**:
+- `client.ts` - DuckDB connection management
+- `schema.ts` - Table definitions and migrations
+- `operations.ts` - CRUD operations
+- `file-storage.ts` - File upload/list/delete
+- `types.ts` - TypeScript interfaces
+
+**Tables**:
+- `files` - File metadata (id, name, format, size)
+- `file_data_{fileId}` - Dynamic tables for parsed data
+- `column_metadata` - AI column configuration (model, provider, prompt, web search settings)
+- `cell_metadata` - Cell status, errors, sources
+
+**Features**:
+- OPFS persistence (survives browser refresh)
+- Schema migrations for backwards compatibility
+- Batch operations for performance
+- Web search sources storage per-cell
+
+---
+
 ## Technical Debt & Future Work
 
 ### Immediate Priority (🚨)
-1. **Implement real AI inference** - Replace mock in `ai-inference.ts`
+1. ~~**Implement real AI inference**~~ ✅ Completed
 2. **Add error handling UI** - Toast notifications for errors
 3. **Add loading states** - Better UX during AI generation
 
 ### Medium Priority (⚠️)
 1. **Consolidate data-processor.ts and format-parser.ts** - Reduce overlap
 2. **Add undo/redo** - Spreadsheet editor history
-3. **Implement data export** - Export to Embedding Atlas
+3. **Implement data export** - Export to CSV, JSON, Parquet
 4. **Add logging infrastructure** - Structured logging for debugging
 
 ### Low Priority (💡)
 1. **Virtual scrolling** - For large datasets
 2. **Web workers** - Offload parsing to background thread
-3. **Batch AI requests** - Optimize API calls
-4. **Real-time collaboration** - WebSocket/CRDT (likely out of scope)
+3. ~~**Batch AI requests**~~ ✅ Implemented with provider-specific batch sizes
+4. **Real-time collaboration** - WebSocket/CRDT (out of scope)
 
 ---
 
@@ -658,7 +746,7 @@ COLUMN_TEMPLATES
 ## External Dependencies
 
 ### Production
-- `next@15.1.6` - Framework
+- `next@15` - Framework
 - `react@19`, `react-dom@19` - UI library
 - `@radix-ui/*` - 15 Radix UI primitives
 - `lucide-react` - Icons
@@ -667,6 +755,17 @@ COLUMN_TEMPLATES
 - `axios` - HTTP client
 - `yaml` - YAML parsing
 - `clsx`, `tailwind-merge` - CSS utilities
+- `@duckdb/duckdb-wasm` - Browser-based SQL database
+
+### AI SDK (Vercel AI SDK)
+- `ai` - Core AI SDK
+- `@ai-sdk/openai` - OpenAI provider (includes Responses API)
+- `@ai-sdk/anthropic` - Anthropic provider
+- `@ai-sdk/google` - Google Generative AI provider
+- `@ai-sdk/perplexity` - Perplexity provider (native search)
+- `@ai-sdk/groq` - Groq provider
+- `@ai-sdk/cohere` - Cohere provider
+- `@ai-sdk/mistral` - Mistral provider
 
 ### Development
 - `typescript@5.x` - Type checking
@@ -683,10 +782,20 @@ FluffyViz is a well-architected, modern Next.js application with strong type saf
 **Key strengths**:
 - Comprehensive TypeScript types
 - Modular architecture with clear separation of concerns
-- Performance-conscious (memoization, operation queues)
-- Excellent test coverage for critical paths
+- Performance-conscious (memoization, operation queues, batch processing)
+- Multi-provider AI inference with web search augmentation
+- DuckDB WASM for robust browser-based persistence
 - Accessibility-first (Radix UI)
 
-**Primary gap**: AI inference is mocked and needs real API integration.
+**Recent additions** (Dec 2025):
+- Web search augmentation for AI columns
+- Perplexity provider integration
+- Generation settings UI
+- DuckDB schema for sources storage
 
 **No orphaned files detected** - the codebase is lean and purposeful.
+
+---
+
+**Last Updated**: December 2025
+**Version**: Beta Build

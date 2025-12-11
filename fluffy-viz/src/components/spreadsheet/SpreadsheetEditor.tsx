@@ -16,6 +16,7 @@ import { Input } from '@/components/ui/input'
 import { ArrowLeft, Download, Save, Loader2, X, ArrowUpDown, Filter, Plus } from 'lucide-react'
 import { generateColumnData } from '@/lib/ai-inference'
 import type { OutputSchema } from '@/types/structured-output'
+import type { WebSearchConfig } from '@/types/web-search'
 import {
   extractFieldValues,
   generateExpandedColumnNames,
@@ -63,7 +64,7 @@ export interface Column {
   model?: Model
   provider?: ModelProvider
   prompt?: string
-  searchWeb?: boolean
+  webSearch?: WebSearchConfig
   isAIGenerated?: boolean
   outputSchema?: OutputSchema
   metadata?: {
@@ -306,8 +307,10 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
     prompt: string
     model: Model
     provider: ModelProvider
-    searchWeb?: boolean
+    webSearch?: WebSearchConfig
     outputSchema?: OutputSchema
+    temperature?: number
+    maxTokens?: number
   }) => {
     // Check for duplicate column name
     const existingColumnMeta = await getAllColumnMetadata(fileId)
@@ -334,7 +337,7 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
       model: columnData.model,
       provider: columnData.provider,
       prompt: columnData.prompt,
-      searchWeb: columnData.searchWeb,
+      webSearch: columnData.webSearch,
       outputSchema: columnData.outputSchema,
       metadata: {
         prompt: columnData.prompt,
@@ -359,6 +362,35 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
       console.log(`[SpreadsheetEditor] Column ${newColumn.id} added to DuckDB`)
     } catch (error) {
       console.error('[SpreadsheetEditor] Failed to add column to DuckDB:', error)
+    }
+
+    // Create companion _sources column if web search is enabled
+    const sourcesColumnId = `${newColumn.id}_sources`
+    if (columnData.webSearch?.enabled) {
+      const sourcesColumn: Column = {
+        id: sourcesColumnId,
+        name: `${columnData.name}_sources`,
+        type: 'string',
+        visible: true,
+        columnType: 'computed',
+        isAIGenerated: false,
+      }
+
+      setColumns(prev => [...prev, sourcesColumn])
+
+      // Add empty data for sources column
+      setData(prev => prev.map(row => ({
+        ...row,
+        [sourcesColumnId]: ''
+      })))
+
+      // Persist sources column to DuckDB
+      try {
+        await addColumnToDuckDB(fileId, sourcesColumnId, 'TEXT', '')
+        console.log(`[SpreadsheetEditor] Sources column ${sourcesColumnId} added to DuckDB`)
+      } catch (error) {
+        console.error('[SpreadsheetEditor] Failed to add sources column to DuckDB:', error)
+      }
     }
 
     // Save column metadata
@@ -524,8 +556,10 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
       prompt: string
       model: Model
       provider: ModelProvider
-      searchWeb?: boolean
+      webSearch?: WebSearchConfig
       outputSchema?: OutputSchema
+      temperature?: number
+      maxTokens?: number
     }
   ) => {
     setGeneratingColumn(column.id)
@@ -590,6 +624,8 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
 
       // Track generated values for batch update to DuckDB
       const generatedValues: Array<{ rowIndex: number; value: string }> = []
+      // Track sources values for companion column
+      const sourcesValues: Array<{ rowIndex: number; value: string }> = []
 
       // Generate data for all rows with cell-level updates
       await generateColumnData(
@@ -608,7 +644,16 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
           // Track for DuckDB batch update
           generatedValues.push({ rowIndex: dbRowIndex, value: cellValue })
 
-          // Prepare cell metadata
+          // Track sources for the companion column
+          const sourcesColumnId = `${column.id}_sources`
+          const sourcesValue = result.sources && result.sources.length > 0
+            ? JSON.stringify(result.sources.map(s => s.url))
+            : ''
+          if (sourcesValue) {
+            sourcesValues.push({ rowIndex: dbRowIndex, value: sourcesValue })
+          }
+
+          // Prepare cell metadata with sources
           const cellMeta: CellMetadata = {
             fileId,
             columnId: column.id,
@@ -617,7 +662,16 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
             error: result.error,
             errorType: result.errorType,
             edited: false,
-            lastEditTime: undefined
+            lastEditTime: undefined,
+            sources: result.sources?.map(s => ({
+              url: s.url,
+              title: s.title,
+            }))
+          }
+
+          // Log sources if present
+          if (result.sources && result.sources.length > 0) {
+            console.log(`[SpreadsheetEditor] Row ${rowIndex + 1} has ${result.sources.length} sources`)
           }
 
           // Save cell metadata immediately
@@ -625,17 +679,19 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
             console.error('[SpreadsheetEditor] Failed to save cell metadata:', err)
           )
 
-          // Update in-memory state with metadata
+          // Update in-memory state with metadata and sources
           setData(prev => {
             const updated = [...prev]
             updated[rowIndex] = {
               ...updated[rowIndex],
               [column.id]: cellValue,
+              [sourcesColumnId]: sourcesValue,
               [`${column.id}__meta`]: {
                 status: cellMeta.status,
                 error: cellMeta.error,
                 errorType: cellMeta.errorType,
-                edited: false
+                edited: false,
+                sources: cellMeta.sources
               }
             }
             return updated
@@ -648,7 +704,8 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
             return next
           })
         },
-        columnData.outputSchema
+        columnData.outputSchema,
+        columnData.webSearch
       )
 
       // Persist to DuckDB after all generation is complete
@@ -656,6 +713,13 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
         try {
           await batchUpdateColumn(fileId, column.id, generatedValues)
           console.log(`[SpreadsheetEditor] AI column data persisted to DuckDB for column ${column.id}`)
+
+          // Persist sources column if we have sources
+          const sourcesColumnId = `${column.id}_sources`
+          if (sourcesValues.length > 0 && columnData.webSearch?.enabled) {
+            await batchUpdateColumn(fileId, sourcesColumnId, sourcesValues)
+            console.log(`[SpreadsheetEditor] Sources column data persisted to DuckDB for column ${sourcesColumnId}`)
+          }
 
           // Wait a bit for async metadata saves to complete
           await new Promise(resolve => setTimeout(resolve, 100))

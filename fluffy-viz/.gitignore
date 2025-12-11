@@ -1,6 +1,8 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
-# dependencies
+# =============================================================================
+# Dependencies
+# =============================================================================
 /node_modules
 /.pnp
 .pnp.*
@@ -10,35 +12,91 @@
 !.yarn/releases
 !.yarn/versions
 
-# testing
-/coverage
-
-# next.js
+# =============================================================================
+# Build & Output
+# =============================================================================
 /.next/
 /out/
-
-# production
 /build
+/dist
 
-# misc
+# =============================================================================
+# Testing
+# =============================================================================
+/coverage
+*.lcov
+
+# =============================================================================
+# Environment & Secrets
+# =============================================================================
+# Environment files (never commit secrets!)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Provider configuration (contains API keys - use provider-config.example.json as template)
+provider-config.json
+
+# =============================================================================
+# IDE & Editor
+# =============================================================================
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+*.swp
+*.swo
+*~
+
+# =============================================================================
+# OS Files
+# =============================================================================
 .DS_Store
-*.pem
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
 
-# debug
+# =============================================================================
+# Debug & Logs
+# =============================================================================
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
+*.log
 
-# env files (can opt-in for committing if needed)
-.env*
-
-# vercel
-.vercel
-
-# typescript
+# =============================================================================
+# TypeScript
+# =============================================================================
 *.tsbuildinfo
 next-env.d.ts
 
-# provider configuration (contains API keys)
-provider-config.json
+# =============================================================================
+# Vercel
+# =============================================================================
+.vercel
+
+# =============================================================================
+# Security
+# =============================================================================
+*.pem
+*.key
+*.cert
+secrets/
+
+# =============================================================================
+# Local Development
+# =============================================================================
+# Local DuckDB files (if any persist outside OPFS)
+*.duckdb
+*.duckdb.wal
+
+# Temporary files
+tmp/
+temp/
+*.tmp

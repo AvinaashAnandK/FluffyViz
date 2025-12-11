@@ -23,45 +23,6 @@ export const INFERENCE_PROVIDERS: ModelProvider[] = [
     }
   },
   {
-    id: 'together',
-    name: 'together',
-    displayName: 'Together AI',
-    icon: '🤝',
-    url: 'https://api.together.xyz/v1',
-    models: [
-      'meta-llama/Llama-3.1-8B-Instruct-Turbo',
-      'meta-llama/Llama-3.1-70B-Instruct-Turbo',
-      'mistralai/Mixtral-8x7B-Instruct-v0.1',
-      'NousResearch/Nous-Hermes-2-Mixtral-8x7B-DPO'
-    ],
-    maxContextLength: 32768,
-    supportsStreaming: true,
-    pricing: {
-      input: 0.1,
-      output: 0.1,
-      unit: 'per 1M tokens'
-    }
-  },
-  {
-    id: 'novita',
-    name: 'novita',
-    displayName: 'Novita AI',
-    icon: '🚀',
-    url: 'https://api.novita.ai/v3',
-    models: [
-      'meta-llama/llama-3.1-8b-instruct',
-      'meta-llama/llama-3.1-70b-instruct',
-      'mistralai/mistral-7b-instruct-v0.3'
-    ],
-    maxContextLength: 8192,
-    supportsStreaming: true,
-    pricing: {
-      input: 0.08,
-      output: 0.12,
-      unit: 'per 1M tokens'
-    }
-  },
-  {
     id: 'openai',
     name: 'openai',
     displayName: 'OpenAI',
@@ -121,6 +82,26 @@ export const INFERENCE_PROVIDERS: ModelProvider[] = [
       output: 15,
       unit: 'per 1M tokens'
     }
+  },
+  {
+    id: 'perplexity',
+    name: 'perplexity',
+    displayName: 'Perplexity',
+    icon: '🔍',
+    url: 'https://api.perplexity.ai',
+    models: [
+      'sonar',
+      'sonar-pro',
+      'sonar-reasoning',
+      'sonar-reasoning-pro'
+    ],
+    maxContextLength: 200000,
+    supportsStreaming: true,
+    pricing: {
+      input: 1,
+      output: 5,
+      unit: 'per 1M tokens'
+    }
   }
 ]
 
@@ -165,21 +146,13 @@ export function getCompatibleProviders(modelId: string): ModelProvider[] {
   // Llama models
   if (modelId.includes('llama') || modelId.includes('meta-llama')) {
     const groq = getProviderById('groq')
-    const together = getProviderById('together')
-    const novita = getProviderById('novita')
     if (groq) compatibleProviders.push(groq)
-    if (together) compatibleProviders.push(together)
-    if (novita) compatibleProviders.push(novita)
   }
 
   // Mixtral models
   if (modelId.includes('mixtral') || modelId.includes('mistral')) {
     const groq = getProviderById('groq')
-    const together = getProviderById('together')
-    const novita = getProviderById('novita')
     if (groq) compatibleProviders.push(groq)
-    if (together) compatibleProviders.push(together)
-    if (novita) compatibleProviders.push(novita)
   }
 
   // Claude models
@@ -194,12 +167,16 @@ export function getCompatibleProviders(modelId: string): ModelProvider[] {
     if (cohere) compatibleProviders.push(cohere)
   }
 
+  // Perplexity models
+  if (modelId.includes('sonar') || modelId.includes('perplexity')) {
+    const perplexity = getProviderById('perplexity')
+    if (perplexity) compatibleProviders.push(perplexity)
+  }
+
   // If no specific matches, return popular general providers
   if (compatibleProviders.length === 0) {
     const groq = getProviderById('groq')
-    const together = getProviderById('together')
     if (groq) compatibleProviders.push(groq)
-    if (together) compatibleProviders.push(together)
   }
 
   return compatibleProviders

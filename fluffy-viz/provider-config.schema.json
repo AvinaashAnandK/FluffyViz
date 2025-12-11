@@ -28,12 +28,6 @@
         "groq": {
           "$ref": "#/definitions/providerConfig"
         },
-        "together": {
-          "$ref": "#/definitions/providerConfig"
-        },
-        "novita": {
-          "$ref": "#/definitions/providerConfig"
-        },
         "huggingface": {
           "$ref": "#/definitions/providerConfig"
         },
@@ -42,9 +36,6 @@
         },
         "mistral": {
           "$ref": "#/definitions/providerConfig"
-        },
-        "local": {
-          "$ref": "#/definitions/localProviderConfig"
         }
       },
       "additionalProperties": false
@@ -56,7 +47,7 @@
         "augmentation": {
           "type": "string",
           "description": "Default provider for column augmentation",
-          "enum": ["openai", "anthropic", "cohere", "groq", "together", "novita", "huggingface", "google", "mistral", "local"]
+          "enum": ["openai", "anthropic", "cohere", "groq", "huggingface", "google", "mistral"]
         },
         "embedding": {
           "type": "string",
@@ -103,44 +94,6 @@
         "baseUrl": {
           "type": "string",
           "description": "Optional custom base URL for API requests",
-          "format": "uri"
-        }
-      },
-      "additionalProperties": false
-    },
-    "localProviderConfig": {
-      "type": "object",
-      "required": ["enabled", "capabilities"],
-      "properties": {
-        "apiKey": {
-          "type": "string",
-          "description": "Not required for local providers",
-          "maxLength": 0
-        },
-        "enabled": {
-          "type": "boolean",
-          "description": "Whether this provider is enabled"
-        },
-        "capabilities": {
-          "type": "object",
-          "description": "Enabled capabilities for this provider",
-          "properties": {
-            "text": {
-              "type": "boolean"
-            },
-            "embedding": {
-              "type": "boolean"
-            },
-            "mmEmbedding": {
-              "type": "boolean"
-            }
-          },
-          "required": ["text", "embedding", "mmEmbedding"],
-          "additionalProperties": false
-        },
-        "baseUrl": {
-          "type": "string",
-          "description": "Local server URL (e.g., http://localhost:11434 for Ollama)",
           "format": "uri"
         }
       },

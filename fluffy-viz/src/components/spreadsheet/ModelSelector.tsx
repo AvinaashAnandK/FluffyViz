@@ -11,6 +11,8 @@ interface ModelSelectorProps {
   placeholder?: string
   className?: string
   filterByProvider?: string
+  /** When true, only show models with searchSupport: true */
+  filterByWebSearch?: boolean
 }
 
 export function ModelSelector({
@@ -18,7 +20,8 @@ export function ModelSelector({
   onModelSelect,
   placeholder = "Search models...",
   className = "",
-  filterByProvider
+  filterByProvider,
+  filterByWebSearch = false
 }: ModelSelectorProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
@@ -81,7 +84,7 @@ export function ModelSelector({
     }
   }
 
-  // Filter categories by provider first, then by search query
+  // Filter categories by provider, web search support, and search query
   const filteredCategories = useMemo(() => {
     let filtered = categories
 
@@ -91,6 +94,16 @@ export function ModelSelector({
         ...category,
         models: category.models.filter(model => {
           return (model as any).provider === filterByProvider
+        })
+      })).filter(category => category.models.length > 0)
+    }
+
+    // Apply web search filter - only show models with searchSupport: true
+    if (filterByWebSearch) {
+      filtered = filtered.map(category => ({
+        ...category,
+        models: category.models.filter(model => {
+          return (model as any).searchSupport === true
         })
       })).filter(category => category.models.length > 0)
     }
@@ -107,7 +120,7 @@ export function ModelSelector({
     }
 
     return filtered
-  }, [categories, filterByProvider, searchQuery])
+  }, [categories, filterByProvider, filterByWebSearch, searchQuery])
 
   return (
     <div className={`relative ${className}`}>

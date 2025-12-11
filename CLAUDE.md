@@ -99,11 +99,26 @@ The `flattenObject()` function converts nested data to spreadsheet columns using
 #### 3. **AI Column Generation**
 - Templates defined in `src/config/ai-column-templates.ts`
 - YAML prompt files in `src/config/prompts/*.yaml`
-- Provider configuration: `src/config/provider-settings.ts` (OpenAI, Anthropic, Groq, Together, Novita, Cohere, Google, Mistral)
+- Provider configuration: `src/config/provider-settings.ts` (OpenAI, Anthropic, Groq, Cohere, Google, Mistral, HuggingFace, Perplexity)
 - API route: `src/app/api/generate-column/route.ts` - batch processing with provider-specific batch sizes
-- Inference: `src/lib/ai-inference.ts` - supports text and structured output modes
-- Model registry: `src/lib/model-registry-server.ts` - cached model definitions
-- **Cell metadata tracks**: status (pending/succeeded/failed/edited), errors, original values
+- Inference: `src/lib/ai-inference.ts` - supports text, structured output, and web search modes
+- Model registry: `src/lib/model-registry-server.ts` - cached model definitions with `searchSupport` flags
+- **Cell metadata tracks**: status (pending/succeeded/failed/edited), errors, original values, web search sources
+
+#### 3a. **Web Search Augmentation**
+AI columns can optionally use real-time web search to enhance generation quality:
+
+- **Types**: `src/types/web-search.ts` - WebSearchConfig, SearchSource, SearchContextSize
+- **Supported providers**:
+  - **OpenAI**: Uses `webSearchPreview` tool with Responses API for search-preview models
+  - **Google Gemini**: Uses `googleSearch` tool for grounding
+  - **Perplexity**: Native built-in search (always-on for sonar models)
+- **UI Components**:
+  - `GenerationSettings.tsx` - Temperature, maxTokens, search context size, location settings
+  - Web search toggle in AddColumnModal with automatic provider/model filtering
+- **Storage**: Sources stored per-cell in `cell_metadata.sources` (JSON)
+- **Error handling**: `src/lib/error-messages.ts` - user-friendly error messages for search-specific failures
+- **Model fields**: `apiMode`, `searchSupport`, `searchBuiltIn` in model registry YAML
 
 #### 4. **Embedding Visualization**
 - Wizard: `src/components/embedding-viewer/embedding-wizard.tsx` - column selection, embedding configuration
@@ -140,6 +155,9 @@ import { useFileStorage } from '@/hooks/use-file-storage';
 - `src/types/agent-data.ts` - Data format types (NormalizedAgentData, SupportedFormat, etc.)
 - `src/types/models.ts` - AI model and provider types
 - `src/types/file-storage.ts` - File selection events
+- `src/types/web-search.ts` - Web search configuration and source types
+- `src/types/structured-output.ts` - Structured output schema types
+- `src/lib/duckdb/types.ts` - DuckDB storage types (ColumnMetadata, CellMetadata)
 - Component-specific types in same file or adjacent `types.ts`
 
 #### Template System
@@ -239,6 +257,12 @@ Key docs:
 ## Current Priorities (as of Dec 2025)
 
 See `ProjectDetails/2025-12-02/feature-enhancements.md` for full roadmap.
+
+**Recently Completed**:
+- Web search augmentation (OpenAI, Google, Perplexity)
+- Perplexity provider integration with sonar models
+- Generation settings UI (temperature, maxTokens, search context)
+- DuckDB persistence for AI column metadata and sources
 
 **P0 - Core Features**:
 1. Embedding Atlas deep integration (pass all columns, hover/color config, search)

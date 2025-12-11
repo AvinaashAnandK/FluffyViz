@@ -33,6 +33,9 @@ FluffyViz bridges this gap by making AI conversation data easy to explore and au
   - **Summarization**: Condense long conversations
   - **Classification**: Categorize conversations (support, sales, etc.)
   - **Custom Prompts**: Ask any question about your data
+- **Enable Web Search**: Toggle on to let AI access real-time web information
+  - Perfect for fact-checking, current events, or research-augmented tasks
+  - Works with OpenAI, Google Gemini, and Perplexity models
 
 ### 4. **Select Your AI Model**
 - Choose from 100+ AI models (GPT-4, Claude, Llama, etc.)
@@ -49,7 +52,10 @@ FluffyViz bridges this gap by making AI conversation data easy to explore and au
 Upload any common AI log format and FluffyViz figures out how to parse it automatically.
 
 ### ✅ **Multiple AI Providers**
-Not locked into one AI company—choose from OpenAI, Anthropic, Cohere, Groq, Together AI, and more.
+Not locked into one AI company—choose from OpenAI, Anthropic, Cohere, Groq, Google, Perplexity, and more.
+
+### ✅ **Web Search Augmentation**
+Enable real-time web search for AI columns when you need current information or fact-checking. Supported by OpenAI, Google Gemini, and Perplexity models.
 
 ### ✅ **Privacy-First**
 All your data stays in your browser. Nothing is sent to external servers except AI inference requests (which you control).
@@ -108,20 +114,23 @@ Currently in development. Expected to be free and open-source.
 
 ## Current Status
 
-**Active Development** - Core features working:
+**Beta Ready** - Core features working:
 - ✅ File upload and format detection
 - ✅ Spreadsheet viewing and editing
 - ✅ AI model and provider selection UI
 - ✅ Prompt template library
-- 🚧 AI inference integration (in progress)
-- 🚧 Export to visualization tools (planned)
+- ✅ AI inference integration (OpenAI, Anthropic, Google, Perplexity, and more)
+- ✅ Web search augmentation for AI columns
+- ✅ DuckDB-based data persistence
+- 🚧 Export to visualization tools (in progress)
 
 ## Privacy & Security
 
-- **Local-first**: All data stored in your browser (IndexedDB)
+- **Local-first**: All data stored in your browser using DuckDB WASM
 - **No accounts required**: No login, no tracking
 - **Controlled AI requests**: You choose when to send data to AI providers
 - **File size limits**: 50MB max to keep your browser performant
+- **API keys stay local**: Provider API keys are stored only in your browser
 
 ## Getting Started
 
@@ -139,5 +148,5 @@ Currently in development. Expected to be free and open-source.
 
 ---
 
-**Last Updated**: October 2025
-**Version**: Early Development Build
+**Last Updated**: December 2025
+**Version**: Beta Build

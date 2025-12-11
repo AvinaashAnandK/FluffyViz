@@ -38,24 +38,6 @@
         "mmEmbedding": false
       }
     },
-    "together": {
-      "apiKey": "",
-      "enabled": false,
-      "capabilities": {
-        "text": true,
-        "embedding": false,
-        "mmEmbedding": false
-      }
-    },
-    "novita": {
-      "apiKey": "",
-      "enabled": false,
-      "capabilities": {
-        "text": true,
-        "embedding": false,
-        "mmEmbedding": false
-      }
-    },
     "huggingface": {
       "apiKey": "",
       "enabled": false,
@@ -82,16 +64,6 @@
         "embedding": true,
         "mmEmbedding": false
       }
-    },
-    "local": {
-      "apiKey": "",
-      "enabled": false,
-      "capabilities": {
-        "text": true,
-        "embedding": false,
-        "mmEmbedding": false
-      },
-      "baseUrl": "http://localhost:11434"
     }
   },
   "defaults": {

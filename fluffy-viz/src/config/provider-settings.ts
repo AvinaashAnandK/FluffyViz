@@ -8,12 +8,10 @@ export type ProviderKey =
   | 'anthropic'
   | 'cohere'
   | 'groq'
-  | 'together'
-  | 'novita'
   | 'huggingface'
   | 'google'
   | 'mistral'
-  | 'local'
+  | 'perplexity'
 
 export interface ProviderCapabilities {
   text: boolean
@@ -93,22 +91,10 @@ export const PROVIDER_META: Record<ProviderKey, ProviderMeta> = {
     needsApiKey: true,
     supports: { text: true, embedding: false, mmEmbedding: false },
   },
-  together: {
-    label: 'Together AI',
-    freeTier: true,
+  perplexity: {
+    label: 'Perplexity',
+    freeTier: false,
     needsApiKey: true,
-    supports: { text: true, embedding: false, mmEmbedding: false },
-  },
-  novita: {
-    label: 'Novita AI',
-    freeTier: true,
-    needsApiKey: true,
-    supports: { text: true, embedding: false, mmEmbedding: false },
-  },
-  local: {
-    label: 'Local LLM',
-    freeTier: true,
-    needsApiKey: false,
     supports: { text: true, embedding: false, mmEmbedding: false },
   },
 }

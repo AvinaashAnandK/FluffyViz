@@ -1,21 +1,26 @@
 'use client'
 
 import { useState, useEffect, useMemo } from 'react'
-import { X, AlertCircle } from 'lucide-react'
+import { X, AlertCircle, Settings2, Globe } from 'lucide-react'
 import { ModelSelector } from './ModelSelector'
 import { ProviderSelector } from './ProviderSelector'
 import { PromptComposer } from './PromptComposer'
 import { SchemaBuilder } from './SchemaBuilder'
+import { GenerationSettings } from './GenerationSettings'
 import { ConversationalHistoryConfig, ConversationalHistoryConfigData } from './ConversationalHistoryConfig'
 import { Model, ModelProvider } from '@/types/models'
 import { getDefaultProviderForModel } from '@/lib/providers'
 import { loadPromptConfig, PromptConfig } from '@/config/ai-column-templates'
 import { ColumnMeta } from '@/lib/prompt-serializer'
-import { loadProviderSettings, getEnabledProviders, type ProviderSettings } from '@/config/provider-settings'
+import { loadProviderSettings, getEnabledProviders, type ProviderSettings, type ProviderKey } from '@/config/provider-settings'
 import type { FieldSchema, OutputSchema, ColumnExpansionMode } from '@/types/structured-output'
+import type { WebSearchConfig } from '@/types/web-search'
 import { schemaToPromptFormat, isValidOutputSchema } from '@/lib/schema-utils'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+import { Switch } from '@/components/ui/switch'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
 
 interface ColumnInfo {
@@ -32,6 +37,9 @@ interface AddColumnModalProps {
     model: Model
     provider: ModelProvider
     outputSchema?: OutputSchema
+    webSearch?: WebSearchConfig
+    temperature?: number
+    maxTokens?: number
   }) => void
   template: string | null
   availableColumns: ColumnInfo[]
@@ -63,6 +71,20 @@ export function AddColumnModal({
   const [schemaFields, setSchemaFields] = useState<FieldSchema[]>([])
   const [expansionMode, setExpansionMode] = useState<'single' | 'expanded' | 'both'>('expanded')
 
+  // Generation settings state
+  const [temperature, setTemperature] = useState(0.7)
+  const [maxTokens, setMaxTokens] = useState(500)
+
+  // Web search state
+  const [webSearchEnabled, setWebSearchEnabled] = useState(false)
+  const [webSearchConfig, setWebSearchConfig] = useState<WebSearchConfig>({
+    enabled: false,
+    contextSize: 'medium',
+  })
+
+  // Model registry for filtering
+  const [allModels, setAllModels] = useState<any[]>([])
+
   // Validate output schema
   const outputSchema: OutputSchema = {
     mode: outputMode,
@@ -78,12 +100,28 @@ export function AddColumnModal({
   const isDuplicateName = columnName.trim() !== '' &&
     existingColumnNames.some(name => name.toLowerCase() === columnName.trim().toLowerCase())
 
-  // Load provider configuration on mount
+  // Load provider configuration and model registry on mount
   useEffect(() => {
-    loadProviderSettings()
-      .then(setProviderConfig)
+    Promise.all([
+      loadProviderSettings(),
+      fetch('/api/model-registry').then(r => r.json())
+    ])
+      .then(([config, registry]) => {
+        setProviderConfig(config)
+
+        // Flatten models from registry for filtering
+        const models: any[] = []
+        for (const [providerId, providerModels] of Object.entries(registry as Record<string, any>)) {
+          if (providerModels.text) {
+            for (const model of providerModels.text) {
+              models.push({ ...model, provider: providerId })
+            }
+          }
+        }
+        setAllModels(models)
+      })
       .catch(error => {
-        console.error('Failed to load provider config:', error)
+        console.error('Failed to load config:', error)
         setProviderConfig(null)
       })
       .finally(() => setLoadingConfig(false))
@@ -92,6 +130,43 @@ export function AddColumnModal({
   // Check if any providers are enabled
   const enabledProviders = providerConfig ? getEnabledProviders(providerConfig) : []
   const hasEnabledProviders = enabledProviders.length > 0
+
+  // Filter models based on web search toggle
+  const filteredModels = useMemo(() => {
+    return allModels.filter(model => {
+      // Only include models from enabled providers
+      if (!enabledProviders.includes(model.provider as ProviderKey)) {
+        return false
+      }
+
+      // If web search is enabled, show only search-capable models
+      if (webSearchEnabled) {
+        return model.searchSupport === true
+      }
+
+      // If web search is disabled, hide built-in search models
+      return model.searchBuiltIn !== true
+    })
+  }, [allModels, webSearchEnabled, enabledProviders])
+
+  // Derive web-search-capable providers from model registry
+  const webSearchCapableProviders = useMemo(() => {
+    const providers = new Set<ProviderKey>()
+    allModels.forEach(model => {
+      if (model.searchSupport && enabledProviders.includes(model.provider as ProviderKey)) {
+        providers.add(model.provider as ProviderKey)
+      }
+    })
+    return providers
+  }, [allModels, enabledProviders])
+
+  // When web search is enabled, filter to providers that have search-capable models
+  const availableProviders = useMemo(() => {
+    if (!webSearchEnabled) {
+      return enabledProviders
+    }
+    return enabledProviders.filter(p => webSearchCapableProviders.has(p))
+  }, [enabledProviders, webSearchEnabled, webSearchCapableProviders])
 
   // Convert available columns to ColumnMeta format
   const columnsMeta: ColumnMeta[] = useMemo(() => {
@@ -160,6 +235,28 @@ export function AddColumnModal({
     }
   }, [template])
 
+  // Handle web search toggle change
+  const handleWebSearchToggle = (checked: boolean) => {
+    setWebSearchEnabled(checked)
+    setWebSearchConfig(prev => ({ ...prev, enabled: checked }))
+
+    // Clear model selection if current model doesn't support search
+    if (checked && selectedModel) {
+      const modelInfo = allModels.find(m => m.id === selectedModel.id)
+      if (!modelInfo?.searchSupport) {
+        setSelectedModel(undefined)
+      }
+    }
+
+    // Clear provider if not in available providers
+    if (checked && selectedProvider) {
+      if (!webSearchCapableProviders.has(selectedProvider.id as ProviderKey)) {
+        setSelectedProvider(undefined)
+        setSelectedModel(undefined)
+      }
+    }
+  }
+
   const handleProviderSelect = (provider: ModelProvider) => {
     setSelectedProvider(provider)
     // Clear model selection when provider changes
@@ -195,12 +292,20 @@ export function AddColumnModal({
       // Regular column validation
       if (!columnName.trim() || !prompt.trim() || !promptValid || !selectedModel || !selectedProvider || !isSchemaValid) return
 
+      // For Perplexity (built-in search), always pass webSearch for location settings
+      // even if the toggle is off (since search is always-on for Perplexity)
+      const isPerplexityBuiltInSearch = selectedProvider?.id === 'perplexity'
+      const shouldPassWebSearch = webSearchEnabled || isPerplexityBuiltInSearch
+
       onAddColumn({
         name: columnName.trim(),
         prompt: prompt.trim(),
         model: selectedModel,
         provider: selectedProvider,
-        outputSchema: outputMode === 'structured' ? outputSchema : undefined
+        outputSchema: outputMode === 'structured' ? outputSchema : undefined,
+        webSearch: shouldPassWebSearch ? { ...webSearchConfig, enabled: shouldPassWebSearch } : undefined,
+        temperature,
+        maxTokens,
       })
     }
 
@@ -213,6 +318,10 @@ export function AddColumnModal({
     setConvHistoryConfig(null)
     setOutputMode('text')
     setSchemaFields([])
+    setWebSearchEnabled(false)
+    setWebSearchConfig({ enabled: false, contextSize: 'medium' })
+    setTemperature(0.7)
+    setMaxTokens(500)
   }
 
   return (
@@ -356,22 +465,76 @@ export function AddColumnModal({
                   </div>
                 )}
 
+                {/* Web Search Toggle + Generation Settings */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        id="web-search"
+                        checked={webSearchEnabled}
+                        onCheckedChange={handleWebSearchToggle}
+                      />
+                      <Label htmlFor="web-search" className="text-sm cursor-pointer flex items-center gap-1">
+                        <Globe className="h-4 w-4" />
+                        Enable web search
+                      </Label>
+                    </div>
+
+                    {/* Generation settings gear */}
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                          <Settings2 className="h-4 w-4" />
+                          <span className="sr-only">Generation settings</span>
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-80 max-h-[70vh] overflow-y-auto" align="end">
+                        <GenerationSettings
+                          temperature={temperature}
+                          maxTokens={maxTokens}
+                          webSearchEnabled={webSearchEnabled}
+                          webSearchConfig={webSearchConfig}
+                          onTemperatureChange={setTemperature}
+                          onMaxTokensChange={setMaxTokens}
+                          onWebSearchConfigChange={setWebSearchConfig}
+                          showLocationForBuiltInSearch={selectedProvider?.id === 'perplexity'}
+                        />
+                      </PopoverContent>
+                    </Popover>
+                  </div>
+
+                  {webSearchEnabled && (
+                    <p className="text-xs text-muted-foreground">
+                      LLM will search the web for current information. Adds latency and API costs.
+                    </p>
+                  )}
+
+                  {/* Warning for Perplexity always-on search */}
+                  {selectedProvider?.id === 'perplexity' && !webSearchEnabled && (
+                    <p className="text-xs text-amber-600 dark:text-amber-400">
+                      Note: Perplexity models always include web search. Toggle has no effect.
+                    </p>
+                  )}
+                </div>
+
                 {/* Provider and Model Selection */}
                 <div className="space-y-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                      Provider ({enabledProviders.length} available)
+                      Provider ({availableProviders.length} available{webSearchEnabled ? ' with search' : ''})
                     </label>
                     <ProviderSelector
                       selectedProvider={selectedProvider}
                       onProviderSelect={handleProviderSelect}
                       className="w-full"
+                      filterProviders={webSearchEnabled ? Array.from(webSearchCapableProviders) : undefined}
                     />
                   </div>
 
                   <div>
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                       Model {selectedProvider ? `(filtered by ${selectedProvider.displayName})` : ''}
+                      {webSearchEnabled ? ' - search enabled' : ''}
                     </label>
                     <ModelSelector
                       selectedModel={selectedModel}
@@ -379,6 +542,7 @@ export function AddColumnModal({
                       placeholder="Search and select a model..."
                       className="w-full"
                       filterByProvider={selectedProvider?.id}
+                      filterByWebSearch={webSearchEnabled}
                     />
                   </div>
                 </div>

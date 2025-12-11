@@ -1,6 +1,7 @@
 /**
  * API route for AI column generation
  * Handles batch processing of rows with AI inference
+ * Supports web search augmentation when enabled
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -13,6 +14,16 @@ import {
 import { loadProviderSettingsServer } from '@/lib/provider-config-server'
 import { loadModelRegistryServer, getModelById } from '@/lib/model-registry-server'
 import type { OutputSchema } from '@/types/structured-output'
+import type { WebSearchConfig, SearchSource } from '@/types/web-search'
+
+interface BatchResult {
+  content: string
+  error?: string
+  errorType?: string
+  rowIndex: number
+  sources?: SearchSource[]
+  warning?: string
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -24,9 +35,11 @@ export async function POST(req: NextRequest) {
       temperature = 0.7,
       maxTokens = 500,
       outputSchema,
+      webSearch,
     } = await req.json()
 
     const isStructuredOutput = outputSchema?.mode === 'structured' && outputSchema?.fields?.length > 0
+    const webSearchEnabled = webSearch?.enabled === true
 
     console.log('[Generate Column] Request:', {
       providerId,
@@ -34,7 +47,9 @@ export async function POST(req: NextRequest) {
       rowCount: rows?.length,
       hasPrompt: !!prompt,
       isStructuredOutput,
-      fieldCount: outputSchema?.fields?.length || 0
+      fieldCount: outputSchema?.fields?.length || 0,
+      webSearchEnabled,
+      webSearchContextSize: webSearch?.contextSize,
     })
 
     // Validate required fields
@@ -86,13 +101,25 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    console.log('[Generate Column] Processing', rows.length, 'rows')
+    // Validate web search compatibility
+    if (webSearchEnabled && !modelConfig.searchSupport) {
+      console.warn(`[Generate Column] Web search enabled but model ${modelId} does not support it`)
+    }
+
+    // Warn about large batch with web search
+    if (webSearchEnabled && rows.length > 50) {
+      console.warn(`[Generate Column] Web search enabled for ${rows.length} rows - may incur significant API costs`)
+    }
+
+    console.log('[Generate Column] Processing', rows.length, 'rows', webSearchEnabled ? 'with web search' : '')
 
     // Process rows in batches for parallelization
     // Use provider-specific batch size if configured, otherwise default to 5
+    // Reduce batch size when web search is enabled to avoid rate limits
     const providerConfig = config.providers[providerId as ProviderKey]
-    const BATCH_SIZE = providerConfig?.batchSize ?? 5
-    const results: Array<{ content: string; error?: string; rowIndex: number }> = []
+    const defaultBatchSize = webSearchEnabled ? 3 : 5
+    const BATCH_SIZE = providerConfig?.batchSize ?? defaultBatchSize
+    const results: BatchResult[] = []
 
     console.log(`[Generate Column] Using batch size: ${BATCH_SIZE}`)
 
@@ -109,7 +136,7 @@ export async function POST(req: NextRequest) {
         try {
           const interpolatedPrompt = interpolatePromptForRow(prompt, row)
 
-          console.log(`[Generate Column] Row ${rowIndex + 1}/${rows.length} - Prompt length:`, interpolatedPrompt.length, isStructuredOutput ? '(structured)' : '(text)')
+          console.log(`[Generate Column] Row ${rowIndex + 1}/${rows.length} - Prompt length:`, interpolatedPrompt.length, isStructuredOutput ? '(structured)' : '(text)', webSearchEnabled ? '(web search)' : '')
 
           let result
           if (isStructuredOutput) {
@@ -126,7 +153,8 @@ export async function POST(req: NextRequest) {
               temperature,
               maxTokens,
               outputSchema: outputSchema as OutputSchema,
-            })
+              webSearch: webSearch as WebSearchConfig | undefined,
+            }, modelConfig)
           } else {
             // Use regular text completion
             result = await generateCompletion({
@@ -140,23 +168,31 @@ export async function POST(req: NextRequest) {
               prompt: interpolatedPrompt,
               temperature,
               maxTokens,
-            })
+              webSearch: webSearch as WebSearchConfig | undefined,
+            }, modelConfig)
           }
 
           if (result.error) {
             console.error(`[Generate Column] Row ${rowIndex + 1} error:`, result.error)
           } else {
-            console.log(`[Generate Column] Row ${rowIndex + 1} success - Content length:`, result.content.length)
+            console.log(`[Generate Column] Row ${rowIndex + 1} success - Content length:`, result.content.length, result.sources ? `(${result.sources.length} sources)` : '')
           }
 
-          return { ...result, rowIndex }
+          return {
+            content: result.content,
+            error: result.error,
+            errorType: result.errorType,
+            rowIndex,
+            sources: result.sources,
+            warning: result.warning,
+          } as BatchResult
         } catch (rowError) {
           console.error(`[Generate Column] Row ${rowIndex + 1} exception:`, rowError)
           return {
             content: '',
             error: rowError instanceof Error ? rowError.message : 'Unknown error',
             rowIndex
-          }
+          } as BatchResult
         }
       })
 
@@ -165,11 +201,30 @@ export async function POST(req: NextRequest) {
       results.push(...batchResults)
 
       console.log(`[Generate Column] Batch ${Math.floor(batchStart / BATCH_SIZE) + 1} completed`)
+
+      // Add a small delay between batches when web search is enabled to avoid rate limits
+      if (webSearchEnabled && batchEnd < rows.length) {
+        await new Promise(resolve => setTimeout(resolve, 500))
+      }
     }
 
-    console.log('[Generate Column] Completed - Success:', results.filter(r => !r.error).length, 'Errors:', results.filter(r => r.error).length)
+    // Calculate summary statistics
+    const succeeded = results.filter(r => !r.error).length
+    const failed = results.filter(r => r.error).length
+    const warnings = results.filter(r => r.warning).length
 
-    return NextResponse.json({ results })
+    console.log('[Generate Column] Completed - Success:', succeeded, 'Failed:', failed, 'Warnings:', warnings)
+
+    return NextResponse.json({
+      results,
+      summary: {
+        total: rows.length,
+        succeeded,
+        failed,
+        warnings,
+        webSearchEnabled,
+      }
+    })
   } catch (error) {
     console.error('[Generate Column] API error:', error)
     return NextResponse.json(

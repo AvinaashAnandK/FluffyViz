@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { ChevronDown, Check, AlertCircle } from 'lucide-react'
 import { ModelProvider } from '@/types/models'
 import { loadProviderSettings, getEnabledProviders, getProviderApiKey, PROVIDER_META, type ProviderKey } from '@/config/provider-settings'
@@ -9,12 +9,15 @@ interface ProviderSelectorProps {
   selectedProvider?: ModelProvider
   onProviderSelect: (provider: ModelProvider) => void
   className?: string
+  /** Filter to only show these provider IDs */
+  filterProviders?: string[]
 }
 
 export function ProviderSelector({
   selectedProvider,
   onProviderSelect,
-  className = ""
+  className = "",
+  filterProviders
 }: ProviderSelectorProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [availableProviders, setAvailableProviders] = useState<ModelProvider[]>([])
@@ -69,7 +72,13 @@ export function ProviderSelector({
     setIsOpen(!isOpen)
   }
 
-  const totalProviderCount = availableProviders.length
+  // Filter providers based on filterProviders prop
+  const filteredProviders = useMemo(() => {
+    if (!filterProviders || filterProviders.length === 0) {
+      return availableProviders
+    }
+    return availableProviders.filter(provider => filterProviders.includes(provider.id))
+  }, [availableProviders, filterProviders])
 
   return (
     <div className={`relative ${className}`}>
@@ -120,26 +129,32 @@ export function ProviderSelector({
             </div>
           )}
 
-          {!loading && availableProviders.length === 0 && (
+          {!loading && filteredProviders.length === 0 && (
             <div className="p-4 text-center">
               <AlertCircle className="w-8 h-8 mx-auto mb-2" style={{ color: '#9CA3AF' }} />
-              <div className="text-sm mb-1" style={{ color: '#9CA3AF' }}>No providers configured</div>
-              <div className="text-xs" style={{ color: '#9CA3AF' }}>Please configure at least one provider with text capability</div>
+              <div className="text-sm mb-1" style={{ color: '#9CA3AF' }}>
+                {filterProviders ? 'No matching providers available' : 'No providers configured'}
+              </div>
+              <div className="text-xs" style={{ color: '#9CA3AF' }}>
+                {filterProviders
+                  ? 'Configure a provider that supports this feature'
+                  : 'Please configure at least one provider with text capability'}
+              </div>
             </div>
           )}
 
-          {!loading && availableProviders.length > 0 && (
+          {!loading && filteredProviders.length > 0 && (
             <div className="max-h-60 overflow-y-auto">
               {/* Provider Header */}
               <div className="px-3 py-2 border-b" style={{ backgroundColor: '#F8F9FA', borderColor: '#E5E7EB' }}>
                 <div className="text-sm font-medium" style={{ color: '#374151' }}>
-                  Configured Providers ({availableProviders.length})
+                  {filterProviders ? 'Compatible Providers' : 'Configured Providers'} ({filteredProviders.length})
                 </div>
               </div>
 
               {/* Providers List */}
               <div className="py-1">
-                {availableProviders.map((provider) => (
+                {filteredProviders.map((provider) => (
                   <div
                     key={provider.id}
                     className="px-3 py-2 cursor-pointer flex items-center justify-between transition-colors"
