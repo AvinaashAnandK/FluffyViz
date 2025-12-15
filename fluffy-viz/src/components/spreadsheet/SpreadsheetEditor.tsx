@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { Card, CardContent } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -13,7 +13,7 @@ import { useFileStorage } from '@/hooks/use-file-storage'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
-import { ArrowLeft, Download, Save, Loader2, X, ArrowUpDown, Filter, Plus } from 'lucide-react'
+import { ArrowLeft, Download, Save, Loader2, X, ArrowUpDown, Filter, Plus, Trash2 } from 'lucide-react'
 import { generateColumnData } from '@/lib/ai-inference'
 import type { OutputSchema } from '@/types/structured-output'
 import type { WebSearchConfig } from '@/types/web-search'
@@ -41,6 +41,8 @@ import {
   removeColumn,
   deleteColumnMetadata,
   deleteColumnCellMetadata,
+  updateColumnWidth,
+  getColumnWidths,
   type CellMetadata
 } from '@/lib/duckdb'
 import { selectFewShotExamples, buildFewShotPrompt } from '@/lib/few-shot-sampling'
@@ -54,6 +56,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import {
+  getFiltersForFile,
+  getFilterRowIndices,
+  deleteFilter,
+  type SavedFilterMetadata
+} from '@/lib/filters/storage'
 
 export interface Column {
   id: string
@@ -123,6 +131,11 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
     value: ''
   })
 
+  // Saved filter state (from embedding view selections)
+  const [savedFilters, setSavedFilters] = useState<SavedFilterMetadata[]>([])
+  const [activeSavedFilter, setActiveSavedFilter] = useState<string | null>(null)
+  const [savedFilterRowIndices, setSavedFilterRowIndices] = useState<number[] | null>(null)
+
   // Retry modal state
   const [isRetryModalOpen, setIsRetryModalOpen] = useState(false)
   const [selectedRetryColumn, setSelectedRetryColumn] = useState<Column | null>(null)
@@ -133,19 +146,55 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
     editedAt: number;
   }>>([])
 
-  // Build WHERE clause from filter rules
-  const buildWhereClause = (): string | undefined => {
-    if (filters.length === 0) return undefined
+  // Column width state
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({})
+  const widthUpdateTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
-    const conditions = filters.map(filter => {
+  // Handle column width change with debounced persistence
+  const handleColumnWidthChange = useCallback((columnId: string, width: number) => {
+    // Update local state immediately for smooth UI
+    setColumnWidths(prev => ({ ...prev, [columnId]: width }))
+
+    // Debounce persistence to DuckDB
+    if (widthUpdateTimeoutRef.current) {
+      clearTimeout(widthUpdateTimeoutRef.current)
+    }
+
+    widthUpdateTimeoutRef.current = setTimeout(async () => {
+      try {
+        await updateColumnWidth(fileId, columnId, width)
+        await persistDatabase()
+      } catch (error) {
+        console.error('Failed to persist column width:', error)
+      }
+    }, 300)
+  }, [fileId])
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (widthUpdateTimeoutRef.current) {
+        clearTimeout(widthUpdateTimeoutRef.current)
+      }
+    }
+  }, [])
+
+  // Build WHERE clause from filter rules and saved filter
+  const buildWhereClause = (): string | undefined => {
+    const conditions: string[] = []
+
+    // Add conditions from manual filter rules
+    filters.forEach(filter => {
       const columnName = `"${filter.columnId}"`
 
       // Null check operators don't need values
       if (filter.operator === 'IS NULL') {
-        return `${columnName} IS NULL`
+        conditions.push(`${columnName} IS NULL`)
+        return
       }
       if (filter.operator === 'IS NOT NULL') {
-        return `${columnName} IS NOT NULL`
+        conditions.push(`${columnName} IS NOT NULL`)
+        return
       }
 
       // For other operators, format the value
@@ -163,9 +212,15 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
         formattedValue = `'${String(filter.value).replace(/'/g, "''")}'`
       }
 
-      return `${columnName} ${filter.operator} ${formattedValue}`
+      conditions.push(`${columnName} ${filter.operator} ${formattedValue}`)
     })
 
+    // Add saved filter condition (row indices from embedding view)
+    if (savedFilterRowIndices && savedFilterRowIndices.length > 0) {
+      conditions.push(`row_index IN (${savedFilterRowIndices.join(',')})`)
+    }
+
+    if (conditions.length === 0) return undefined
     return conditions.join(' AND ')
   }
 
@@ -207,6 +262,12 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
           const columnMetaMap = new Map(
             columnMeta.map(m => [m.columnId, m])
           )
+
+          // Load saved column widths
+          const savedWidths = await getColumnWidths(fileId)
+          if (Object.keys(savedWidths).length > 0) {
+            setColumnWidths(savedWidths)
+          }
 
           // Generate columns from first row (or all data if no pagination data yet)
           if (parsedData.length > 0) {
@@ -266,7 +327,20 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
     }
 
     loadFileData()
-  }, [fileId, getFile, currentPage, pageSize, sortColumn, sortDirection, filters])
+  }, [fileId, getFile, currentPage, pageSize, sortColumn, sortDirection, filters, savedFilterRowIndices])
+
+  // Load saved filters (also refresh when switching back to spreadsheet tab)
+  useEffect(() => {
+    const loadSavedFilters = async () => {
+      try {
+        const filters = await getFiltersForFile(fileId)
+        setSavedFilters(filters)
+      } catch (error) {
+        console.error('Error loading saved filters:', error)
+      }
+    }
+    loadSavedFilters()
+  }, [fileId, activeTab])
 
   // Calculate column statistics for badges
   const columnStats = useMemo(() => {
@@ -388,6 +462,16 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
       try {
         await addColumnToDuckDB(fileId, sourcesColumnId, 'TEXT', '')
         console.log(`[SpreadsheetEditor] Sources column ${sourcesColumnId} added to DuckDB`)
+
+        // Save metadata for sources column so it loads with correct name on refresh
+        await saveColumnMetadata({
+          fileId,
+          columnId: sourcesColumnId,
+          columnName: `${columnData.name}_sources`,
+          columnType: 'computed',
+          createdAt: Date.now(),
+        })
+        console.log(`[SpreadsheetEditor] Sources column metadata saved for ${sourcesColumnId}`)
       } catch (error) {
         console.error('[SpreadsheetEditor] Failed to add sources column to DuckDB:', error)
       }
@@ -845,12 +929,22 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
       await deleteColumnCellMetadata(fileId, columnId)
       console.log(`[SpreadsheetEditor] Cell metadata deleted for column ${columnId}`)
 
-      // Update in-memory columns state (remove from array)
-      setColumns(prev => prev.filter(c => c.id !== columnId))
+      // Cascade delete: Check for and delete companion sources column
+      const sourcesColumnId = `${columnId}_sources`
+      const sourcesColumn = columns.find(c => c.id === sourcesColumnId)
+      if (sourcesColumn) {
+        console.log(`[SpreadsheetEditor] Cascade deleting companion sources column: ${sourcesColumnId}`)
+        await removeColumn(fileId, sourcesColumnId)
+        await deleteColumnMetadata(fileId, sourcesColumnId)
+        console.log(`[SpreadsheetEditor] Companion sources column deleted: ${sourcesColumnId}`)
+      }
 
-      // Update in-memory data (remove column from each row)
+      // Update in-memory columns state (remove main column and sources column if exists)
+      setColumns(prev => prev.filter(c => c.id !== columnId && c.id !== sourcesColumnId))
+
+      // Update in-memory data (remove column and sources column from each row)
       setData(prev => prev.map(row => {
-        const { [columnId]: _, [`${columnId}__meta`]: __, ...rest } = row
+        const { [columnId]: _, [`${columnId}__meta`]: __, [sourcesColumnId]: ___, ...rest } = row
         return rest
       }))
 
@@ -858,7 +952,10 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
       await persistDatabase()
       console.log(`[SpreadsheetEditor] Database persisted after column deletion`)
 
-      toast.success(`Column "${column.name}" deleted successfully`)
+      const deletedMsg = sourcesColumn
+        ? `Column "${column.name}" and its sources column deleted successfully`
+        : `Column "${column.name}" deleted successfully`
+      toast.success(deletedMsg)
     } catch (error) {
       console.error('[SpreadsheetEditor] Failed to delete column:', error)
       toast.error(`Failed to delete column "${column.name}"`)
@@ -907,6 +1004,40 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
 
   const clearAllFilters = () => {
     setFilters([])
+  }
+
+  // Apply a saved filter from embedding view
+  const applySavedFilter = async (filterId: string) => {
+    try {
+      const rowIndices = await getFilterRowIndices(filterId)
+      setSavedFilterRowIndices(rowIndices)
+      setActiveSavedFilter(filterId)
+      setCurrentPage(1) // Reset to first page when applying filter
+    } catch (error) {
+      console.error('Error applying saved filter:', error)
+      toast.error('Failed to apply saved filter')
+    }
+  }
+
+  // Clear saved filter
+  const clearSavedFilter = () => {
+    setSavedFilterRowIndices(null)
+    setActiveSavedFilter(null)
+  }
+
+  // Delete a saved filter
+  const handleDeleteSavedFilter = async (filterId: string) => {
+    try {
+      await deleteFilter(filterId)
+      setSavedFilters(prev => prev.filter(f => f.id !== filterId))
+      if (activeSavedFilter === filterId) {
+        clearSavedFilter()
+      }
+      toast.success('Filter deleted')
+    } catch (error) {
+      console.error('Error deleting saved filter:', error)
+      toast.error('Failed to delete filter')
+    }
   }
 
   // Open retry modal for a column
@@ -1225,11 +1356,15 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <div className="container mx-auto p-1 space-y-2">
-        <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'spreadsheet' | 'embeddings')} className="w-full">
+    <div className="h-[100dvh] bg-background flex flex-col">
+      <div className="container mx-auto p-1 space-y-2 flex flex-col flex-1 min-h-0">
+        <Tabs
+          value={activeTab}
+          onValueChange={(value) => setActiveTab(value as 'spreadsheet' | 'embeddings')}
+          className="w-full flex flex-col flex-1 min-h-0"
+        >
           {/* Compact Header with Tabs */}
-          <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center justify-between gap-4 flex-shrink-0">
             <div className="flex items-center gap-3">
               <Button
                 variant="ghost"
@@ -1243,6 +1378,11 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
                 <Badge variant="secondary" className="text-xs">
                   {data.length} rows × {columns.length} columns
                 </Badge>
+                {activeSavedFilter && (
+                  <Badge variant="outline" className="text-xs bg-primary/10">
+                    Filtered: {savedFilters.find(f => f.id === activeSavedFilter)?.name}
+                  </Badge>
+                )}
               </div>
             </div>
 
@@ -1270,21 +1410,21 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
             </div>
           </div>
 
-          <TabsContent value="spreadsheet" className="mt-2">
+          <TabsContent value="spreadsheet" className="mt-2 flex-1 min-h-0">
             {/* Spreadsheet Card with integrated drawer */}
-            <Card className="rounded-2xl shadow-sm relative overflow-hidden">
+            <Card className="rounded-2xl shadow-sm relative overflow-hidden h-full">
               {/* <CardHeader>
                 <CardTitle className="font-sans">Spreadsheet Editor</CardTitle>
               </CardHeader> */}
 
               {/* Content area that shifts left when drawer opens */}
               <CardContent
-                className={`transition-all duration-300 ease-in-out ${
+                className={`h-full min-h-0 flex flex-col transition-all duration-300 ease-in-out ${
                   isAddColumnModalOpen ? 'mr-[440px]' : 'mr-0'
                 }`}
               >
                 {/* Filter and Sort Controls */}
-                <div className="mb-4 p-4 bg-muted/30 rounded-lg border border-border space-y-3">
+                <div className="mb-4 p-4 bg-muted/30 rounded-lg border border-border space-y-3 flex-shrink-0">
                   <div className="flex items-center gap-6 flex-wrap">
                     {/* Sort Control */}
                     <div className="flex items-center gap-2">
@@ -1347,6 +1487,61 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
 
                     {/* Divider */}
                     <div className="h-6 w-px bg-border" />
+
+                    {/* Saved Filter Dropdown */}
+                    {savedFilters.length > 0 && (
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium">View:</span>
+                        <Select
+                          value={activeSavedFilter || 'all'}
+                          onValueChange={(value) => {
+                            if (value === 'all') {
+                              clearSavedFilter()
+                            } else {
+                              applySavedFilter(value)
+                            }
+                          }}
+                        >
+                          <SelectTrigger className="w-[220px]">
+                            <SelectValue placeholder="All Data" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">
+                              <div className="flex items-center justify-between w-full">
+                                <span>All Data</span>
+                                <span className="text-xs text-muted-foreground ml-2">
+                                  ({totalRows} rows)
+                                </span>
+                              </div>
+                            </SelectItem>
+                            {savedFilters.map((filter) => (
+                              <SelectItem key={filter.id} value={filter.id}>
+                                <div className="flex items-center justify-between w-full">
+                                  <span>{filter.name}</span>
+                                  <span className="text-xs text-muted-foreground ml-2">
+                                    ({filter.pointCount} rows)
+                                  </span>
+                                </div>
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {activeSavedFilter && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-destructive hover:text-destructive"
+                            onClick={() => handleDeleteSavedFilter(activeSavedFilter)}
+                            title="Delete this saved filter"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Divider between saved filters and manual filters */}
+                    {savedFilters.length > 0 && <div className="h-6 w-px bg-border" />}
 
                     {/* Filter Control */}
                     <div className="flex items-center gap-2">
@@ -1514,6 +1709,8 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
                   columnStats={columnStats}
                   onOpenRetryModal={handleOpenRetryModal}
                   onDeleteColumn={handleDeleteColumn}
+                  columnWidths={columnWidths}
+                  onColumnWidthChange={handleColumnWidthChange}
                 />
               </CardContent>
 
@@ -1610,8 +1807,8 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
             })()}
           </TabsContent>
 
-          <TabsContent value="embeddings" className="mt-2">
-            <Card className="rounded-2xl shadow-sm h-[calc(100vh)]">
+          <TabsContent value="embeddings" className="mt-2 flex-1 min-h-0">
+            <Card className="rounded-2xl shadow-sm h-full">
               <CardContent className="p-0 h-full">
                 <AgentTraceViewer
                   fileId={fileId}

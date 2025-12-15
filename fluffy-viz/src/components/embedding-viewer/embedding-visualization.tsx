@@ -2,44 +2,114 @@
 
 /**
  * Embedding visualization using embedding-atlas
- * Renders an interactive scatter plot of embedded points using DuckDB queries
+ * Renders an interactive scatter plot of embedded points using DuckDB queries.
+ *
+ * Deep integration features:
+ * - All spreadsheet columns available for color encoding and tooltips
+ * - Custom searcher for keyword and conceptual search
+ * - Dynamic theme support (light/dark)
+ * - Save filter functionality
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import type { ActiveEmbeddingLayer, EmbeddingPoint } from '@/types/embedding';
+import { createLayerTable, getLayerTableColumns } from '@/lib/embedding/storage';
+import { createFluffySearcher, getSearchableColumns, type Searcher } from '@/lib/embedding/search';
 import { Loader2 } from 'lucide-react';
 
 interface EmbeddingVisualizationProps {
   layer: ActiveEmbeddingLayer;
+  fileId: string;
+  apiKey?: string; // API key for vector search (optional)
   onPointClick: (point: EmbeddingPoint) => void;
+  onSelectionChange?: (selectedPointIds: string[]) => void;
 }
 
-export function EmbeddingVisualization({ layer, onPointClick }: EmbeddingVisualizationProps) {
+// Detect system color scheme preference
+function useColorScheme(): 'light' | 'dark' {
+  const [colorScheme, setColorScheme] = useState<'light' | 'dark'>('light');
+
+  useEffect(() => {
+    // Check if window is available (client-side only)
+    if (typeof window === 'undefined') return;
+
+    // Check initial preference
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    setColorScheme(mediaQuery.matches ? 'dark' : 'light');
+
+    // Listen for changes
+    const handler = (e: MediaQueryListEvent) => {
+      setColorScheme(e.matches ? 'dark' : 'light');
+    };
+
+    mediaQuery.addEventListener('change', handler);
+    return () => mediaQuery.removeEventListener('change', handler);
+  }, []);
+
+  return colorScheme;
+}
+
+export function EmbeddingVisualization({
+  layer,
+  fileId,
+  apiKey,
+  onPointClick,
+  onSelectionChange,
+}: EmbeddingVisualizationProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [coordinator, setCoordinator] = useState<any>(null);
   const [EmbeddingAtlasComponent, setEmbeddingAtlasComponent] = useState<any>(null);
+  const [layerTableName, setLayerTableName] = useState<string | null>(null);
+  const [layerColumns, setLayerColumns] = useState<string[]>([]);
+  const [searcher, setSearcher] = useState<Searcher | null>(null);
 
-  // Initialize Mosaic coordinator
+  const colorScheme = useColorScheme();
+
+  // Initialize Mosaic coordinator and create layer table
   useEffect(() => {
-    const initCoordinator = async () => {
+    const initVisualization = async () => {
       try {
         setLoading(true);
         setError(null);
 
-        console.log('[Embedding Visualization] Initializing Mosaic coordinator...');
+        console.log('[Embedding Visualization] Initializing for layer:', layer.id);
 
-        // Dynamically import required modules
+        // Step 1: Create the layer table (JOINs embedding points with file data)
+        console.log('[Embedding Visualization] Creating layer table...');
+        const tableName = await createLayerTable(layer.id, fileId);
+        setLayerTableName(tableName);
+
+        // Step 2: Get available columns for the layer table
+        const columns = await getLayerTableColumns(layer.id);
+        setLayerColumns(columns);
+        console.log('[Embedding Visualization] Layer table columns:', columns);
+
+        // Step 3: Get searchable columns and create searcher
+        const searchableColumns = await getSearchableColumns(layer.id);
+        console.log('[Embedding Visualization] Searchable columns:', searchableColumns);
+
+        const fluffySearcher = createFluffySearcher({
+          layerId: layer.id,
+          fileId,
+          searchableColumns,
+          embeddingProvider: layer.provider,
+          embeddingModel: layer.model,
+          apiKey,
+        });
+        setSearcher(fluffySearcher);
+
+        // Step 4: Dynamically import required modules
+        console.log('[Embedding Visualization] Importing Mosaic and EmbeddingAtlas...');
         const mosaicCore = await import('@uwdata/mosaic-core');
         const { EmbeddingAtlas } = await import('embedding-atlas/react');
 
-        // Get DuckDB instance
+        // Step 5: Get DuckDB instance
         const { getDuckDB } = await import('@/lib/duckdb/client');
         const db = await getDuckDB();
 
+        // Step 6: Create Mosaic coordinator with WASM connector
         console.log('[Embedding Visualization] Creating WASM connector...');
-
-        // Create Mosaic coordinator with WASM connector
         const connector = mosaicCore.wasmConnector({ duckdb: db });
 
         // Get global coordinator instance and set database connector
@@ -52,14 +122,55 @@ export function EmbeddingVisualization({ layer, onPointClick }: EmbeddingVisuali
         setEmbeddingAtlasComponent(() => EmbeddingAtlas);
         setLoading(false);
       } catch (err) {
-        console.error('[Embedding Visualization] Error initializing coordinator:', err);
+        console.error('[Embedding Visualization] Error initializing:', err);
         setError(err instanceof Error ? err.message : 'Failed to initialize visualization');
         setLoading(false);
       }
     };
 
-    initCoordinator();
-  }, []);
+    if (layer && fileId) {
+      initVisualization();
+    }
+  }, [layer, fileId, apiKey]);
+
+  // Handle selection export (for save filter functionality)
+  const handleExportSelection = useCallback(async (
+    predicate: string | null,
+    format: 'json' | 'csv'
+  ) => {
+    if (!layerTableName || !onSelectionChange) return;
+
+    try {
+      // Query selected point IDs based on predicate
+      const { executeQuery } = await import('@/lib/duckdb/client');
+      const whereClause = predicate ? `WHERE ${predicate}` : '';
+      const results = await executeQuery<{ point_id: string }>(
+        `SELECT point_id FROM "${layerTableName}" ${whereClause}`
+      );
+
+      const pointIds = results.map(r => r.point_id);
+      onSelectionChange(pointIds);
+
+      console.log(`[Embedding Visualization] Selection exported: ${pointIds.length} points`);
+    } catch (err) {
+      console.error('[Embedding Visualization] Error exporting selection:', err);
+    }
+  }, [layerTableName, onSelectionChange]);
+
+  // Memoize the data configuration
+  const dataConfig = useMemo(() => {
+    if (!layerTableName) return null;
+
+    return {
+      table: layerTableName,
+      id: 'point_id',
+      projection: {
+        x: 'x',
+        y: 'y',
+      },
+      text: 'composed_text',
+    };
+  }, [layerTableName]);
 
   if (loading) {
     return (
@@ -69,7 +180,9 @@ export function EmbeddingVisualization({ layer, onPointClick }: EmbeddingVisuali
       >
         <div className="flex flex-col items-center gap-2">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
-          <p className="text-sm text-muted-foreground">Initializing visualization...</p>
+          <p className="text-sm text-muted-foreground">
+            {layerTableName ? 'Initializing visualization...' : 'Creating layer table...'}
+          </p>
         </div>
       </div>
     );
@@ -89,7 +202,7 @@ export function EmbeddingVisualization({ layer, onPointClick }: EmbeddingVisuali
     );
   }
 
-  if (!coordinator || !EmbeddingAtlasComponent || !layer) {
+  if (!coordinator || !EmbeddingAtlasComponent || !layer || !dataConfig) {
     return (
       <div
         className="w-full h-full flex items-center justify-center"
@@ -103,22 +216,21 @@ export function EmbeddingVisualization({ layer, onPointClick }: EmbeddingVisuali
     );
   }
 
-  console.log(`[Embedding Visualization] Rendering atlas for layer ${layer.id} with ${layer.points.length} points`);
+  console.log(
+    `[Embedding Visualization] Rendering atlas for layer ${layer.id}`,
+    `with ${layer.points.length} points,`,
+    `table: ${layerTableName},`,
+    `columns: ${layerColumns.length}`
+  );
 
   return (
     <div className="w-full h-full" style={{ minHeight: '400px' }}>
       <EmbeddingAtlasComponent
         coordinator={coordinator}
-        data={{
-          table: 'embedding_points_view',
-          id: 'point_id',
-          projection: {
-            x: 'x',
-            y: 'y'
-          },
-          text: 'composed_text'
-        }}
-        colorScheme="light"
+        data={dataConfig}
+        colorScheme={colorScheme}
+        searcher={searcher}
+        onExportSelection={handleExportSelection}
       />
     </div>
   );

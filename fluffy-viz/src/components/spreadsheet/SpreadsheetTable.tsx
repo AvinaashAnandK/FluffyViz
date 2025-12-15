@@ -65,7 +65,15 @@ interface SpreadsheetTableProps {
   }>
   onOpenRetryModal?: (column: Column) => void
   onDeleteColumn?: (columnId: string) => void
+  // Column width props
+  columnWidths?: Record<string, number>
+  onColumnWidthChange?: (columnId: string, width: number) => void
 }
+
+// Default column width
+const DEFAULT_COLUMN_WIDTH = 200
+const MIN_COLUMN_WIDTH = 80
+const ROW_NUMBER_WIDTH = 64
 
 // Get template groups with hierarchy
 const templateGroups = getTemplateGroups()
@@ -98,7 +106,9 @@ export function SpreadsheetTable({
   onFilterChange,
   columnStats = {},
   onOpenRetryModal,
-  onDeleteColumn
+  onDeleteColumn,
+  columnWidths = {},
+  onColumnWidthChange
 }: SpreadsheetTableProps) {
   const [editingCell, setEditingCell] = useState<{row: number, col: string} | null>(null)
   const [editValue, setEditValue] = useState('')
@@ -107,9 +117,56 @@ export function SpreadsheetTable({
   const [dragRange, setDragRange] = useState<{startRow: number, endRow: number, col: string} | null>(null)
   const [deletingColumnId, setDeletingColumnId] = useState<string | null>(null)
 
+  // Column resize state
+  const [resizingColumn, setResizingColumn] = useState<string | null>(null)
+
   // Refs for drag event listener cleanup
   const mouseMoveRef = useRef<((e: MouseEvent) => void) | null>(null)
   const mouseUpRef = useRef<(() => void) | null>(null)
+
+  // Refs for column resize event listener cleanup
+  const resizeMouseMoveRef = useRef<((e: MouseEvent) => void) | null>(null)
+  const resizeMouseUpRef = useRef<(() => void) | null>(null)
+
+  // Get column width with fallback to default
+  const getColumnWidth = useCallback((columnId: string): number => {
+    return columnWidths[columnId] ?? DEFAULT_COLUMN_WIDTH
+  }, [columnWidths])
+
+  // Handle column resize start
+  const handleResizeStart = useCallback((e: React.MouseEvent, columnId: string) => {
+    e.preventDefault()
+    e.stopPropagation()
+
+    const startX = e.clientX
+    const startWidth = getColumnWidth(columnId)
+
+    setResizingColumn(columnId)
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const deltaX = moveEvent.clientX - startX
+      const newWidth = Math.max(MIN_COLUMN_WIDTH, startWidth + deltaX)
+      onColumnWidthChange?.(columnId, newWidth)
+    }
+
+    const handleMouseUp = () => {
+      setResizingColumn(null)
+      if (resizeMouseMoveRef.current) {
+        document.removeEventListener('mousemove', resizeMouseMoveRef.current)
+      }
+      if (resizeMouseUpRef.current) {
+        document.removeEventListener('mouseup', resizeMouseUpRef.current)
+      }
+      resizeMouseMoveRef.current = null
+      resizeMouseUpRef.current = null
+    }
+
+    resizeMouseMoveRef.current = handleMouseMove
+    resizeMouseUpRef.current = handleMouseUp
+
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+  }, [getColumnWidth, onColumnWidthChange])
 
   // Cleanup drag event listeners on unmount
   useEffect(() => {
@@ -119,6 +176,12 @@ export function SpreadsheetTable({
       }
       if (mouseUpRef.current) {
         document.removeEventListener('mouseup', mouseUpRef.current)
+      }
+      if (resizeMouseMoveRef.current) {
+        document.removeEventListener('mousemove', resizeMouseMoveRef.current)
+      }
+      if (resizeMouseUpRef.current) {
+        document.removeEventListener('mouseup', resizeMouseUpRef.current)
       }
     }
   }, [])
@@ -249,283 +312,357 @@ export function SpreadsheetTable({
     onAddColumn()
   }
 
+  // Calculate total table width for proper sizing
+  const totalTableWidth = ROW_NUMBER_WIDTH +
+    visibleColumns.reduce((sum, col) => sum + getColumnWidth(col.id), 0) +
+    DEFAULT_COLUMN_WIDTH
+
+  // Refs for scroll sync
+  const headerScrollRef = useRef<HTMLDivElement>(null)
+  const bodyScrollRef = useRef<HTMLDivElement>(null)
+
+  // Handle header scroll - sync body
+  const handleHeaderScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    if (bodyScrollRef.current) {
+      bodyScrollRef.current.scrollLeft = e.currentTarget.scrollLeft
+    }
+  }, [])
+
+  // Handle body scroll - sync header
+  const handleBodyScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    if (headerScrollRef.current) {
+      headerScrollRef.current.scrollLeft = e.currentTarget.scrollLeft
+    }
+  }, [])
+
   return (
-    <div className="w-full overflow-auto border border-border rounded-2xl bg-card relative">
-      <table className="w-full border-collapse">
-        <thead className="bg-muted sticky top-0">
-          {/* Column letter headers (A, B, C, etc.) */}
-          <tr>
-            <th className="w-16 h-12 border border-border bg-muted/50 text-muted-foreground text-sm font-normal">
-              {/* Empty corner cell */}
-            </th>
-            {visibleColumns.map((column, index) => (
-              <th key={column.id} className="min-w-[142px] w-80 h-12 border border-border bg-muted text-muted-foreground text-sm font-normal relative">
-                {indexToLetter(index)}
-              </th>
-            ))}
-            {/* Add column header */}
-            <th className="min-w-[142px] w-80 h-12 border border-border bg-muted relative">
-              <div className="flex items-center justify-center h-full">
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <button
-                      className="p-2 hover:bg-accent hover:text-accent-foreground rounded-md transition-colors"
-                      title="Add column"
-                    >
-                      <Plus className="w-4 h-4 text-muted-foreground" />
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="min-w-[280px]">
-                    {templateGroups.map((group, groupIndex) => (
-                      <div key={group.heading}>
-                        <DropdownMenuLabel className="text-xs font-semibold uppercase text-purple-500">
-                          {group.heading}
-                        </DropdownMenuLabel>
-                        {group.templates.map((template) => (
-                          <DropdownMenuItem
-                            key={template.id}
-                            onClick={() => handleTemplateSelect(template.id)}
-                          >
-                            <div className="flex flex-col gap-1">
-                              <span className="font-medium">{template.name}</span>
-                              <span className="text-xs text-muted-foreground">
-                                {template.description}
-                              </span>
-                            </div>
-                          </DropdownMenuItem>
+    <div className={`w-full border border-border rounded-2xl bg-card relative flex flex-col max-h-[calc(100vh-200px)] ${resizingColumn ? 'select-none cursor-col-resize' : ''}`}>
+      {/* Fixed header section */}
+      <div className="flex-shrink-0 overflow-hidden">
+        <div
+          ref={headerScrollRef}
+          className="overflow-x-auto"
+          style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+          onScroll={handleHeaderScroll}
+        >
+          <table className="border-collapse table-fixed" style={{ width: totalTableWidth }}>
+            <thead className="bg-muted">
+              {/* Column letter headers (A, B, C, etc.) */}
+              <tr>
+                <th
+                  className="h-12 border border-border bg-muted text-muted-foreground text-sm font-normal"
+                  style={{ width: ROW_NUMBER_WIDTH }}
+                >
+                  {/* Empty corner cell */}
+                </th>
+                {visibleColumns.map((column, index) => (
+                  <th
+                    key={column.id}
+                    className="h-12 border border-border bg-muted text-muted-foreground text-sm font-normal relative group/resize"
+                    style={{ width: getColumnWidth(column.id) }}
+                  >
+                    {indexToLetter(index)}
+                    {/* Resize handle */}
+                    <div
+                      className="absolute top-0 right-0 w-1 h-full cursor-col-resize bg-transparent hover:bg-primary/50 group-hover/resize:bg-border transition-colors"
+                      onMouseDown={(e) => handleResizeStart(e, column.id)}
+                    />
+                  </th>
+                ))}
+                {/* Add column header */}
+                <th
+                  className="h-12 border border-border bg-muted relative"
+                  style={{ width: DEFAULT_COLUMN_WIDTH }}
+                >
+                  <div className="flex items-center justify-center h-full">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <button
+                          className="p-2 hover:bg-accent hover:text-accent-foreground rounded-md transition-colors"
+                          title="Add column"
+                        >
+                          <Plus className="w-4 h-4 text-muted-foreground" />
+                        </button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="min-w-[280px]">
+                        {templateGroups.map((group, groupIndex) => (
+                          <div key={group.heading}>
+                            <DropdownMenuLabel className="text-xs font-semibold uppercase text-purple-500">
+                              {group.heading}
+                            </DropdownMenuLabel>
+                            {group.templates.map((template) => (
+                              <DropdownMenuItem
+                                key={template.id}
+                                onClick={() => handleTemplateSelect(template.id)}
+                              >
+                                <div className="flex flex-col gap-1">
+                                  <span className="font-medium">{template.name}</span>
+                                  <span className="text-xs text-muted-foreground">
+                                    {template.description}
+                                  </span>
+                                </div>
+                              </DropdownMenuItem>
+                            ))}
+                            {groupIndex < templateGroups.length - 1 && <DropdownMenuSeparator />}
+                          </div>
                         ))}
-                        {groupIndex < templateGroups.length - 1 && <DropdownMenuSeparator />}
-                      </div>
-                    ))}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-            </th>
-          </tr>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                </th>
+              </tr>
 
-          {/* Column name headers */}
-          <tr>
-            <th className="w-16 border border-border bg-muted/50">
-              {/* Empty cell for row numbers */}
-            </th>
-            {visibleColumns.map((column) => {
-              const stats = columnStats[column.id]
-              const isAIColumn = column.columnType === 'ai-generated'
+              {/* Column name headers */}
+              <tr>
+                <th
+                  className="border border-border bg-muted"
+                  style={{ width: ROW_NUMBER_WIDTH }}
+                >
+                  {/* Empty cell for row numbers */}
+                </th>
+                {visibleColumns.map((column) => {
+                  const stats = columnStats[column.id]
+                  const isAIColumn = column.columnType === 'ai-generated'
 
-              return (
-                <th key={`name-${column.id}`} className="border border-border bg-muted text-left">
-                  {column.isAIGenerated && column.metadata?.prompt ? (
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <div
-                            className="w-full p-3 text-left hover:bg-accent hover:text-accent-foreground transition-colors cursor-pointer"
-                            onClick={() => handleSort(column.id)}
-                          >
-                            <div className="flex items-center justify-between gap-2">
-                              <div className="flex flex-col flex-1">
-                                <div className="flex items-center gap-2">
-                                  <span className="font-medium text-foreground">{column.name}</span>
-                                  {isAIColumn && stats && (
-                                    <div className="flex gap-1">
-                                      {stats.failed > 0 && (
-                                        <Badge variant="destructive" className="h-5 text-[10px] px-1">
-                                          {stats.failed} failed
-                                        </Badge>
-                                      )}
-                                      {stats.edited > 0 && (
-                                        <Badge variant="secondary" className="h-5 text-[10px] px-1">
-                                          {stats.edited} edited
-                                        </Badge>
-                                      )}
-                                      {stats.pending > 0 && (
-                                        <Badge variant="outline" className="h-5 text-[10px] px-1">
-                                          {stats.pending} pending
-                                        </Badge>
+                  return (
+                    <th
+                      key={`name-${column.id}`}
+                      className="border border-border bg-muted text-left relative group/resize"
+                      style={{ width: getColumnWidth(column.id) }}
+                    >
+                      {column.isAIGenerated && column.metadata?.prompt ? (
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <div
+                                className="w-full p-3 text-left hover:bg-accent hover:text-accent-foreground transition-colors cursor-pointer"
+                                onClick={() => handleSort(column.id)}
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <div className="flex flex-col flex-1 min-w-0">
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-medium text-foreground truncate">{column.name}</span>
+                                      {isAIColumn && stats && (
+                                        <div className="flex gap-1 flex-shrink-0">
+                                          {stats.failed > 0 && (
+                                            <Badge variant="destructive" className="h-5 text-[10px] px-1">
+                                              {stats.failed} failed
+                                            </Badge>
+                                          )}
+                                          {stats.edited > 0 && (
+                                            <Badge variant="secondary" className="h-5 text-[10px] px-1">
+                                              {stats.edited} edited
+                                            </Badge>
+                                          )}
+                                          {stats.pending > 0 && (
+                                            <Badge variant="outline" className="h-5 text-[10px] px-1">
+                                              {stats.pending} pending
+                                            </Badge>
+                                          )}
+                                        </div>
                                       )}
                                     </div>
-                                  )}
-                                </div>
-                                <span className="text-xs text-muted-foreground">{column.type}</span>
-                              </div>
-                              <div className="flex items-center gap-1">
-                                {isAIColumn && onOpenRetryModal && (
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={(e) => {
-                                      e.stopPropagation()
-                                      onOpenRetryModal(column)
-                                    }}
-                                    className="h-6 w-6 p-0"
-                                    title="Regenerate column"
-                                  >
-                                    <RefreshCw className="h-3 w-3" />
-                                  </Button>
-                                )}
-                                {isAIColumn && onDeleteColumn && (
-                                  <AlertDialog>
-                                    <AlertDialogTrigger asChild>
+                                    <span className="text-xs text-muted-foreground">{column.type}</span>
+                                  </div>
+                                  <div className="flex items-center gap-1 flex-shrink-0">
+                                    {isAIColumn && onOpenRetryModal && (
                                       <Button
                                         variant="ghost"
                                         size="sm"
-                                        onClick={(e) => e.stopPropagation()}
-                                        className="h-6 w-6 p-0 text-destructive hover:text-destructive"
-                                        title="Delete column"
-                                        disabled={deletingColumnId === column.id}
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          onOpenRetryModal(column)
+                                        }}
+                                        className="h-6 w-6 p-0"
+                                        title="Regenerate column"
                                       >
-                                        {deletingColumnId === column.id ? (
-                                          <Loader2 className="h-3 w-3 animate-spin" />
-                                        ) : (
-                                          <Trash2 className="h-3 w-3" />
-                                        )}
+                                        <RefreshCw className="h-3 w-3" />
                                       </Button>
-                                    </AlertDialogTrigger>
-                                    <AlertDialogContent onClick={(e) => e.stopPropagation()}>
-                                      <AlertDialogHeader>
-                                        <AlertDialogTitle>Delete Column</AlertDialogTitle>
-                                        <AlertDialogDescription>
-                                          Are you sure you want to delete &quot;{column.name}&quot;? This action cannot be undone.
-                                        </AlertDialogDescription>
-                                      </AlertDialogHeader>
-                                      <AlertDialogFooter>
-                                        <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                        <AlertDialogAction
-                                          onClick={() => handleDeleteColumn(column.id)}
-                                          className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                                        >
-                                          Delete
-                                        </AlertDialogAction>
-                                      </AlertDialogFooter>
-                                    </AlertDialogContent>
-                                  </AlertDialog>
-                                )}
-                                {getSortIcon(column.id)}
+                                    )}
+                                    {isAIColumn && onDeleteColumn && (
+                                      <AlertDialog>
+                                        <AlertDialogTrigger asChild>
+                                          <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            onClick={(e) => e.stopPropagation()}
+                                            className="h-6 w-6 p-0 text-destructive hover:text-destructive"
+                                            title="Delete column"
+                                            disabled={deletingColumnId === column.id}
+                                          >
+                                            {deletingColumnId === column.id ? (
+                                              <Loader2 className="h-3 w-3 animate-spin" />
+                                            ) : (
+                                              <Trash2 className="h-3 w-3" />
+                                            )}
+                                          </Button>
+                                        </AlertDialogTrigger>
+                                        <AlertDialogContent onClick={(e) => e.stopPropagation()}>
+                                          <AlertDialogHeader>
+                                            <AlertDialogTitle>Delete Column</AlertDialogTitle>
+                                            <AlertDialogDescription>
+                                              Are you sure you want to delete &quot;{column.name}&quot;? This action cannot be undone.
+                                            </AlertDialogDescription>
+                                          </AlertDialogHeader>
+                                          <AlertDialogFooter>
+                                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                            <AlertDialogAction
+                                              onClick={() => handleDeleteColumn(column.id)}
+                                              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                            >
+                                              Delete
+                                            </AlertDialogAction>
+                                          </AlertDialogFooter>
+                                        </AlertDialogContent>
+                                      </AlertDialog>
+                                    )}
+                                    {getSortIcon(column.id)}
+                                  </div>
+                                </div>
                               </div>
+                            </TooltipTrigger>
+                            <TooltipContent side="bottom" className="max-w-md">
+                              <div className="space-y-2">
+                                <div>
+                                  <p className="font-semibold text-xs">Prompt:</p>
+                                  <p className="text-xs whitespace-pre-wrap">
+                                    {formatPromptForDisplay(column.metadata.prompt, columns)}
+                                  </p>
+                                </div>
+                                {column.metadata.outputSchema?.mode === 'structured' && column.metadata.outputSchema.fields.length > 0 && (
+                                  <div>
+                                    <p className="font-semibold text-xs">Expected Output Format:</p>
+                                    <pre className="text-xs whitespace-pre-wrap font-mono bg-gray-700 text-white p-1 rounded mt-1">
+                                      {schemaToPromptFormat(column.metadata.outputSchema.fields)}
+                                    </pre>
+                                  </div>
+                                )}
+                              </div>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      ) : (
+                        <button
+                          className="w-full p-3 text-left hover:bg-accent hover:text-accent-foreground transition-colors"
+                          onClick={() => handleSort(column.id)}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex flex-col flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="font-medium text-foreground truncate">{column.name}</span>
+                                {isAIColumn && stats && (
+                                  <div className="flex gap-1 flex-shrink-0">
+                                    {stats.failed > 0 && (
+                                      <Badge variant="destructive" className="h-5 text-[10px] px-1">
+                                        {stats.failed} failed
+                                      </Badge>
+                                    )}
+                                    {stats.edited > 0 && (
+                                      <Badge variant="secondary" className="h-5 text-[10px] px-1">
+                                        {stats.edited} edited
+                                      </Badge>
+                                    )}
+                                    {stats.pending > 0 && (
+                                      <Badge variant="outline" className="h-5 text-[10px] px-1">
+                                        {stats.pending} pending
+                                      </Badge>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                              <span className="text-xs text-muted-foreground">{column.type}</span>
                             </div>
-                          </div>
-                        </TooltipTrigger>
-                        <TooltipContent side="bottom" className="max-w-md">
-                          <div className="space-y-2">
-                            <div>
-                              <p className="font-semibold text-xs">Prompt:</p>
-                              <p className="text-xs whitespace-pre-wrap">
-                                {formatPromptForDisplay(column.metadata.prompt, columns)}
-                              </p>
-                            </div>
-                            {column.metadata.outputSchema?.mode === 'structured' && column.metadata.outputSchema.fields.length > 0 && (
-                              <div>
-                                <p className="font-semibold text-xs">Expected Output Format:</p>
-                                <pre className="text-xs whitespace-pre-wrap font-mono bg-gray-700 text-white p-1 rounded mt-1">
-                                  {schemaToPromptFormat(column.metadata.outputSchema.fields)}
-                                </pre>
-                              </div>
-                            )}
-                          </div>
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  ) : (
-                    <button
-                      className="w-full p-3 text-left hover:bg-accent hover:text-accent-foreground transition-colors"
-                      onClick={() => handleSort(column.id)}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex flex-col flex-1">
-                          <div className="flex items-center gap-2">
-                            <span className="font-medium text-foreground">{column.name}</span>
-                            {isAIColumn && stats && (
-                              <div className="flex gap-1">
-                                {stats.failed > 0 && (
-                                  <Badge variant="destructive" className="h-5 text-[10px] px-1">
-                                    {stats.failed} failed
-                                  </Badge>
-                                )}
-                                {stats.edited > 0 && (
-                                  <Badge variant="secondary" className="h-5 text-[10px] px-1">
-                                    {stats.edited} edited
-                                  </Badge>
-                                )}
-                                {stats.pending > 0 && (
-                                  <Badge variant="outline" className="h-5 text-[10px] px-1">
-                                    {stats.pending} pending
-                                  </Badge>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                          <span className="text-xs text-muted-foreground">{column.type}</span>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          {isAIColumn && onOpenRetryModal && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                onOpenRetryModal(column)
-                              }}
-                              className="h-6 w-6 p-0"
-                              title="Regenerate column"
-                            >
-                              <RefreshCw className="h-3 w-3" />
-                            </Button>
-                          )}
-                          {isAIColumn && onDeleteColumn && (
-                            <AlertDialog>
-                              <AlertDialogTrigger asChild>
+                            <div className="flex items-center gap-1 flex-shrink-0">
+                              {isAIColumn && onOpenRetryModal && (
                                 <Button
                                   variant="ghost"
                                   size="sm"
-                                  onClick={(e) => e.stopPropagation()}
-                                  className="h-6 w-6 p-0 text-destructive hover:text-destructive"
-                                  title="Delete column"
-                                  disabled={deletingColumnId === column.id}
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    onOpenRetryModal(column)
+                                  }}
+                                  className="h-6 w-6 p-0"
+                                  title="Regenerate column"
                                 >
-                                  {deletingColumnId === column.id ? (
-                                    <Loader2 className="h-3 w-3 animate-spin" />
-                                  ) : (
-                                    <Trash2 className="h-3 w-3" />
-                                  )}
+                                  <RefreshCw className="h-3 w-3" />
                                 </Button>
-                              </AlertDialogTrigger>
-                              <AlertDialogContent onClick={(e) => e.stopPropagation()}>
-                                <AlertDialogHeader>
-                                  <AlertDialogTitle>Delete Column</AlertDialogTitle>
-                                  <AlertDialogDescription>
-                                    Are you sure you want to delete &quot;{column.name}&quot;? This action cannot be undone.
-                                  </AlertDialogDescription>
-                                </AlertDialogHeader>
-                                <AlertDialogFooter>
-                                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                  <AlertDialogAction
-                                    onClick={() => handleDeleteColumn(column.id)}
-                                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                                  >
-                                    Delete
-                                  </AlertDialogAction>
-                                </AlertDialogFooter>
-                              </AlertDialogContent>
-                            </AlertDialog>
-                          )}
-                          {getSortIcon(column.id)}
-                        </div>
-                      </div>
-                    </button>
-                  )}
-                </th>
-              )
-            })}
-            <th className="border border-border bg-muted"></th>
-          </tr>
-        </thead>
+                              )}
+                              {isAIColumn && onDeleteColumn && (
+                                <AlertDialog>
+                                  <AlertDialogTrigger asChild>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={(e) => e.stopPropagation()}
+                                      className="h-6 w-6 p-0 text-destructive hover:text-destructive"
+                                      title="Delete column"
+                                      disabled={deletingColumnId === column.id}
+                                    >
+                                      {deletingColumnId === column.id ? (
+                                        <Loader2 className="h-3 w-3 animate-spin" />
+                                      ) : (
+                                        <Trash2 className="h-3 w-3" />
+                                      )}
+                                    </Button>
+                                  </AlertDialogTrigger>
+                                  <AlertDialogContent onClick={(e) => e.stopPropagation()}>
+                                    <AlertDialogHeader>
+                                      <AlertDialogTitle>Delete Column</AlertDialogTitle>
+                                      <AlertDialogDescription>
+                                        Are you sure you want to delete &quot;{column.name}&quot;? This action cannot be undone.
+                                      </AlertDialogDescription>
+                                    </AlertDialogHeader>
+                                    <AlertDialogFooter>
+                                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                      <AlertDialogAction
+                                        onClick={() => handleDeleteColumn(column.id)}
+                                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                      >
+                                        Delete
+                                      </AlertDialogAction>
+                                    </AlertDialogFooter>
+                                  </AlertDialogContent>
+                                </AlertDialog>
+                              )}
+                              {getSortIcon(column.id)}
+                            </div>
+                          </div>
+                        </button>
+                      )}
+                      {/* Resize handle */}
+                      <div
+                        className="absolute top-0 right-0 w-1 h-full cursor-col-resize bg-transparent hover:bg-primary/50 group-hover/resize:bg-border transition-colors z-10"
+                        onMouseDown={(e) => handleResizeStart(e, column.id)}
+                      />
+                    </th>
+                  )
+                })}
+                <th
+                  className="border border-border bg-muted"
+                  style={{ width: DEFAULT_COLUMN_WIDTH }}
+                ></th>
+              </tr>
+            </thead>
+          </table>
+        </div>
+      </div>
 
-        <tbody>
+      {/* Scrollable body section */}
+      <div
+        ref={bodyScrollRef}
+        className="flex-1 overflow-auto min-h-0"
+        onScroll={handleBodyScroll}
+      >
+        <table className="border-collapse table-fixed" style={{ width: totalTableWidth }}>
+          <tbody>
           {data.map((row, rowIndex) => (
             <tr key={rowIndex}>
               {/* Row number */}
-              <td className="w-16 h-24 border bg-muted text-center text-sm text-muted-foreground">
-                <button className="w-12 h-full hover:bg-accent transition-colors">
+              <td
+                className="h-24 border bg-muted text-center text-sm text-muted-foreground"
+                style={{ width: ROW_NUMBER_WIDTH }}
+              >
+                <button className="w-full h-full hover:bg-accent transition-colors">
                   {rowIndex + 1}
                 </button>
               </td>
@@ -535,6 +672,7 @@ export function SpreadsheetTable({
                 <td
                   key={column.id}
                   className="border border-border p-0"
+                  style={{ width: getColumnWidth(column.id) }}
                   data-cell-row={rowIndex}
                   data-cell-col={column.id}
                 >
@@ -600,7 +738,7 @@ export function SpreadsheetTable({
               ))}
 
               {/* Empty cell for add column */}
-              <td className="border border-border">
+              <td className="border border-border" style={{ width: DEFAULT_COLUMN_WIDTH }}>
                 <div className="min-h-[100px] h-[102px]"></div>
               </td>
             </tr>
@@ -609,7 +747,10 @@ export function SpreadsheetTable({
           {/* Add some empty rows */}
           {[...Array(2)].map((_, index) => (
             <tr key={`empty-${index}`}>
-              <td className="w-16 h-24 border border-border bg-muted/30 text-center text-sm text-muted-foreground">
+              <td
+                className="h-24 border border-border bg-muted/30 text-center text-sm text-muted-foreground"
+                style={{ width: ROW_NUMBER_WIDTH }}
+              >
                 <button className="w-full h-full hover:bg-accent hover:text-accent-foreground transition-colors">
                   {data.length + index + 1}
                 </button>
@@ -618,6 +759,7 @@ export function SpreadsheetTable({
                 <td
                   key={column.id}
                   className="border border-border"
+                  style={{ width: getColumnWidth(column.id) }}
                   data-cell-row={data.length + index}
                   data-cell-col={column.id}
                 >
@@ -626,17 +768,18 @@ export function SpreadsheetTable({
                   </div>
                 </td>
               ))}
-              <td className="border border-border">
+              <td className="border border-border" style={{ width: DEFAULT_COLUMN_WIDTH }}>
                 <div className="min-h-[100px] h-[102px]"></div>
               </td>
             </tr>
           ))}
         </tbody>
-      </table>
+        </table>
+      </div>
 
       {/* Pagination controls */}
       {onPageChange && totalRows > 0 && (
-        <div className="flex items-center justify-between px-4 py-3 border-t border-border bg-muted/30">
+        <div className="flex-shrink-0 flex items-center justify-between px-4 py-3 border-t border-border bg-muted/30">
           <div className="text-sm text-muted-foreground">
             Showing {Math.min((currentPage - 1) * pageSize + 1, totalRows)} to {Math.min(currentPage * pageSize, totalRows)} of {totalRows} rows
           </div>

@@ -6,7 +6,7 @@ CLAUDE.md
 .playwright-mcp/
 
 # Project documentation (local only)
-ProjectDetails/
+# ProjectDetails/
 
 # Sample data files
 sample-data/

@@ -138,6 +138,7 @@ export interface ColumnMetadata {
   webSearchConfig?: StoredWebSearchConfig;  // Full web search configuration
   temperature?: number;         // Generation temperature
   maxTokens?: number;           // Max tokens for generation
+  width?: number;               // Column width in pixels for spreadsheet display
 }
 
 /**

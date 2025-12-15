@@ -533,17 +533,22 @@ export async function generateCompletion(
     }
 
     // Check providerMetadata for OpenAI built-in search citations
+    // Annotations can come from search-preview models (ChatCompletions API)
     const openaiMeta = (result as any).providerMetadata?.openai ||
                        (result as any).experimental_providerMetadata?.openai
     if (openaiMeta) {
       console.log('[AI Inference] OpenAI metadata:', Object.keys(openaiMeta))
       if (openaiMeta.annotations) {
         for (const annotation of openaiMeta.annotations) {
-          if (annotation.type === 'url_citation' && annotation.url) {
-            sources.push({
-              url: annotation.url,
-              title: annotation.title || annotation.text || 'Source',
-            })
+          if (annotation.type === 'url_citation') {
+            // Handle nested url_citation structure from search-preview models
+            const citation = annotation.url_citation || annotation
+            if (citation.url) {
+              sources.push({
+                url: citation.url,
+                title: citation.title || annotation.text || 'Source',
+              })
+            }
           }
         }
       }
@@ -732,15 +737,19 @@ export async function generateStructuredCompletion(
         }
       }
 
-      // Check providerMetadata for OpenAI citations
+      // Check providerMetadata for OpenAI citations (search-preview models)
       const openaiMeta = (result as any).providerMetadata?.openai
       if (openaiMeta?.annotations) {
         for (const annotation of openaiMeta.annotations) {
-          if (annotation.type === 'url_citation' && annotation.url) {
-            sources.push({
-              url: annotation.url,
-              title: annotation.title || annotation.text || 'Source',
-            })
+          if (annotation.type === 'url_citation') {
+            // Handle nested url_citation structure from search-preview models
+            const citation = annotation.url_citation || annotation
+            if (citation.url) {
+              sources.push({
+                url: citation.url,
+                title: citation.title || annotation.text || 'Source',
+              })
+            }
           }
         }
       }

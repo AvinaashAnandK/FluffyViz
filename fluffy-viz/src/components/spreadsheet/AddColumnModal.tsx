@@ -332,7 +332,7 @@ export function AddColumnModal({
     >
       <div className="flex flex-col h-full">
         {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-800">
+        <div className="flex-shrink-0 flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-800">
           <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
             Instructions to generate cells
           </h2>
@@ -371,7 +371,7 @@ export function AddColumnModal({
 
         {/* Scrollable content */}
         {!loadingConfig && hasEnabledProviders && (
-          <div className="flex-1 overflow-y-auto">
+          <div className="flex-1 min-h-0 overflow-y-auto">
             <form onSubmit={handleSubmit} className="p-6 space-y-6">
             {/* Column Name */}
             <div>
@@ -554,7 +554,7 @@ export function AddColumnModal({
 
         {/* Footer with buttons */}
         {!loadingConfig && hasEnabledProviders && (
-          <div className="p-6 border-t border-gray-200 dark:border-gray-800 space-y-2">
+          <div className="flex-shrink-0 p-6 border-t border-gray-200 dark:border-gray-800 space-y-2">
           <button
             type="submit"
             onClick={handleSubmit}

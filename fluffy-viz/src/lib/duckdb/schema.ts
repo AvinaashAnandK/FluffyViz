@@ -80,6 +80,7 @@ export async function initializeSchema(): Promise<void> {
         web_search_config TEXT,
         temperature DOUBLE,
         max_tokens INTEGER,
+        width INTEGER DEFAULT 200,
         PRIMARY KEY (file_id, column_id)
       )
     `);
@@ -129,6 +130,19 @@ export async function initializeSchema(): Promise<void> {
         await executeQuery(`ALTER TABLE column_metadata ADD COLUMN max_tokens INTEGER`);
         console.log('[DuckDB Schema] ✓ Web search columns migration completed');
       }
+
+      // Migration: Add width column if it doesn't exist
+      const widthColumn = await executeQuery<{ column_name: string }>(`
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = 'column_metadata'
+          AND column_name = 'width'
+      `);
+
+      if (widthColumn.length === 0) {
+        await executeQuery(`ALTER TABLE column_metadata ADD COLUMN width INTEGER DEFAULT 200`);
+        console.log('[DuckDB Schema] ✓ Width column migration completed');
+      }
     } catch (error: any) {
       console.error('[DuckDB Schema] Column name migration error:', error);
       // Try to recreate the table with the correct schema
@@ -150,6 +164,7 @@ export async function initializeSchema(): Promise<void> {
             web_search_config TEXT,
             temperature DOUBLE,
             max_tokens INTEGER,
+            width INTEGER DEFAULT 200,
             PRIMARY KEY (file_id, column_id)
           )
         `);
@@ -193,6 +208,19 @@ export async function initializeSchema(): Promise<void> {
     } catch (error: any) {
       console.warn('[DuckDB Schema] Sources column migration error:', error);
     }
+
+    // Create saved_filters table for embedding view selections
+    await executeQuery(`
+      CREATE TABLE IF NOT EXISTS saved_filters (
+        id TEXT PRIMARY KEY,
+        file_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        layer_id TEXT NOT NULL,
+        row_indices INTEGER[] NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    console.log('[DuckDB Schema] ✓ Saved filters table created');
 
     // Create view for embedding visualization with x, y columns
     // This view extracts array elements for embedding-atlas compatibility
@@ -273,6 +301,12 @@ async function createIndexes(): Promise<void> {
       ON cell_metadata(file_id, column_id, status)
     `);
 
+    // Index on saved_filters table
+    await executeQuery(`
+      CREATE INDEX IF NOT EXISTS idx_saved_filters_file
+      ON saved_filters(file_id)
+    `);
+
     console.log('[DuckDB Schema] ✓ Indexes created');
   } catch (error) {
     console.warn('[DuckDB Schema] Failed to create some indexes:', error);
@@ -289,10 +323,10 @@ export async function isSchemaInitialized(): Promise<boolean> {
       SELECT table_name
       FROM information_schema.tables
       WHERE table_schema = 'main'
-        AND table_name IN ('files', 'embedding_layers', 'embedding_points', 'column_metadata', 'cell_metadata')
+        AND table_name IN ('files', 'embedding_layers', 'embedding_points', 'column_metadata', 'cell_metadata', 'saved_filters')
     `);
 
-    return result.length === 5;
+    return result.length === 6;
   } catch {
     return false;
   }
@@ -313,6 +347,7 @@ export async function dropAllTables(): Promise<void> {
 
   try {
     // Drop in reverse order of dependencies
+    await executeQuery('DROP TABLE IF EXISTS saved_filters CASCADE');
     await executeQuery('DROP TABLE IF EXISTS cell_metadata CASCADE');
     await executeQuery('DROP TABLE IF EXISTS column_metadata CASCADE');
     await executeQuery('DROP TABLE IF EXISTS embedding_points CASCADE');

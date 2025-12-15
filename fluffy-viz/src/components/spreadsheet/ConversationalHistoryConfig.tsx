@@ -155,7 +155,9 @@ export function ConversationalHistoryConfig({
 
   // Update parent config
   useEffect(() => {
-    if (conversationIdColumn && sequenceIdColumn && selectedFormatColumns.length > 0) {
+    const isValid = !!(conversationIdColumn && sequenceIdColumn && selectedFormatColumns.length > 0)
+
+    if (isValid) {
       onConfigChange({
         conversationIdColumn,
         sequenceIdColumn,

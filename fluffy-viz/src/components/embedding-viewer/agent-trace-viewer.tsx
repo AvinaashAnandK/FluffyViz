@@ -11,12 +11,13 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card } from '@/components/ui/card';
 import { EmbeddingWizard } from './embedding-wizard';
+import { SaveFilterModal } from './save-filter-modal';
 import type { WizardState, ActiveEmbeddingLayer, EmbeddingLayerMetadata, EmbeddingPoint } from '@/types/embedding';
 import { embeddingStorage, generateEmbeddingId } from '@/lib/embedding/storage';
 import { composeText, addComposedTextColumn } from '@/lib/embedding/text-composer';
 import { batchEmbed } from '@/lib/embedding/batch-embedder';
 import { computeUMAPProjection } from '@/lib/embedding/umap-reducer';
-import { Download, Loader2 } from 'lucide-react';
+import { Download, Loader2, Filter } from 'lucide-react';
 import { loadProviderSettings, getProviderApiKey, type ProviderKey } from '@/config/provider-settings';
 
 // Dynamically import EmbeddingVisualization with SSR disabled to prevent
@@ -47,16 +48,31 @@ interface AgentTraceViewerProps {
 
 export function AgentTraceViewer({ fileId, data, onDataUpdate }: AgentTraceViewerProps) {
   const [wizardOpen, setWizardOpen] = useState(false);
+  const [saveFilterOpen, setSaveFilterOpen] = useState(false);
   const [activeLayer, setActiveLayer] = useState<ActiveEmbeddingLayer | null>(null);
   const [layers, setLayers] = useState<EmbeddingLayerMetadata[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedPoint, setSelectedPoint] = useState<EmbeddingPoint | null>(null);
+  const [selectedPointIds, setSelectedPointIds] = useState<string[]>([]);
+  const [apiKey, setApiKey] = useState<string | undefined>(undefined);
 
-  // Load embedding layers on mount
+  // Load embedding layers and API key on mount
   useEffect(() => {
     loadEmbeddingLayers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fileId]);
+
+  // Load API key when active layer changes
+  useEffect(() => {
+    if (activeLayer) {
+      loadProviderSettings().then(config => {
+        const key = getProviderApiKey(config, activeLayer.provider as ProviderKey);
+        setApiKey(key);
+      }).catch(() => {
+        setApiKey(undefined);
+      });
+    }
+  }, [activeLayer]);
 
   const loadEmbeddingLayers = async () => {
     try {
@@ -204,6 +220,7 @@ export function AgentTraceViewer({ fileId, data, onDataUpdate }: AgentTraceViewe
           open={wizardOpen}
           onClose={() => setWizardOpen(false)}
           columns={data.columns}
+          rows={data.rows}
           onGenerate={handleGenerateEmbeddings}
         />
       </div>
@@ -236,6 +253,15 @@ export function AgentTraceViewer({ fileId, data, onDataUpdate }: AgentTraceViewe
         </div>
 
         <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setSaveFilterOpen(true)}
+            disabled={selectedPointIds.length === 0}
+          >
+            <Filter className="h-4 w-4 mr-2" />
+            Save Filter ({selectedPointIds.length})
+          </Button>
           <Button variant="outline" size="sm" onClick={handleDownloadPNG}>
             <Download className="h-4 w-4 mr-2" />
             Download PNG
@@ -251,7 +277,10 @@ export function AgentTraceViewer({ fileId, data, onDataUpdate }: AgentTraceViewe
         {activeLayer ? (
           <EmbeddingVisualization
             layer={activeLayer}
+            fileId={fileId}
+            apiKey={apiKey}
             onPointClick={setSelectedPoint}
+            onSelectionChange={setSelectedPointIds}
           />
         ) : (
           <div className="flex items-center justify-center h-full">
@@ -281,8 +310,23 @@ export function AgentTraceViewer({ fileId, data, onDataUpdate }: AgentTraceViewe
         open={wizardOpen}
         onClose={() => setWizardOpen(false)}
         columns={data.columns}
+        rows={data.rows}
         onGenerate={handleGenerateEmbeddings}
       />
+
+      {/* Save Filter Modal */}
+      {activeLayer && (
+        <SaveFilterModal
+          open={saveFilterOpen}
+          onClose={() => setSaveFilterOpen(false)}
+          fileId={fileId}
+          layerId={activeLayer.id}
+          pointIds={selectedPointIds}
+          onSaved={() => {
+            setSelectedPointIds([]);
+          }}
+        />
+      )}
     </div>
   );
 }

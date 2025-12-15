@@ -370,8 +370,8 @@ export async function tableExists(fileId: string): Promise<boolean> {
 export async function saveColumnMetadata(metadata: ColumnMetadata): Promise<void> {
   await executeQuery(
     `INSERT OR REPLACE INTO column_metadata
-     (file_id, column_id, column_name, column_type, model, provider, prompt, created_at, output_schema, web_search_enabled, web_search_config, temperature, max_tokens)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     (file_id, column_id, column_name, column_type, model, provider, prompt, created_at, output_schema, web_search_enabled, web_search_config, temperature, max_tokens, width)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       metadata.fileId,
       metadata.columnId,
@@ -385,7 +385,8 @@ export async function saveColumnMetadata(metadata: ColumnMetadata): Promise<void
       metadata.webSearchEnabled ?? false,
       metadata.webSearchConfig ? JSON.stringify(metadata.webSearchConfig) : null,
       metadata.temperature ?? null,
-      metadata.maxTokens ?? null
+      metadata.maxTokens ?? null,
+      metadata.width ?? 200
     ]
   );
 
@@ -413,6 +414,7 @@ export async function getColumnMetadata(
     web_search_config: string | null;
     temperature: number | null;
     max_tokens: number | null;
+    width: number | null;
   }>(
     `SELECT * FROM column_metadata WHERE file_id = ? AND column_id = ?`,
     [fileId, columnId]
@@ -435,6 +437,7 @@ export async function getColumnMetadata(
     webSearchConfig: row.web_search_config ? JSON.parse(row.web_search_config) : undefined,
     temperature: row.temperature ?? undefined,
     maxTokens: row.max_tokens ?? undefined,
+    width: row.width ?? undefined,
   };
 }
 
@@ -456,6 +459,7 @@ export async function getAllColumnMetadata(fileId: string): Promise<ColumnMetada
     web_search_config: string | null;
     temperature: number | null;
     max_tokens: number | null;
+    width: number | null;
   }>(
     `SELECT * FROM column_metadata WHERE file_id = ? ORDER BY created_at`,
     [fileId]
@@ -475,6 +479,7 @@ export async function getAllColumnMetadata(fileId: string): Promise<ColumnMetada
     webSearchConfig: row.web_search_config ? JSON.parse(row.web_search_config) : undefined,
     temperature: row.temperature ?? undefined,
     maxTokens: row.max_tokens ?? undefined,
+    width: row.width ?? undefined,
   }));
 }
 
@@ -491,6 +496,93 @@ export async function deleteColumnMetadata(
   );
 
   console.log(`[DuckDB Operations] Deleted metadata for column ${columnId}`);
+}
+
+/**
+ * Update column width (for resize operations)
+ */
+export async function updateColumnWidth(
+  fileId: string,
+  columnId: string,
+  width: number
+): Promise<void> {
+  // First check if column metadata exists
+  const existing = await getColumnMetadata(fileId, columnId);
+
+  if (existing) {
+    // Update existing metadata
+    await executeQuery(
+      `UPDATE column_metadata SET width = ? WHERE file_id = ? AND column_id = ?`,
+      [width, fileId, columnId]
+    );
+  } else {
+    // Create new metadata entry for data columns (non-AI columns that need width stored)
+    await saveColumnMetadata({
+      fileId,
+      columnId,
+      columnType: 'data',
+      width
+    });
+  }
+}
+
+/**
+ * Batch update column widths (for efficiency when resizing multiple columns)
+ */
+export async function batchUpdateColumnWidths(
+  fileId: string,
+  widths: Record<string, number>
+): Promise<void> {
+  const conn = await getConnection();
+
+  try {
+    for (const [columnId, width] of Object.entries(widths)) {
+      // Check if metadata exists
+      const existing = await executeQuery<{ column_id: string }>(
+        `SELECT column_id FROM column_metadata WHERE file_id = ? AND column_id = ?`,
+        [fileId, columnId]
+      );
+
+      if (existing.length > 0) {
+        await conn.query(`
+          UPDATE column_metadata SET width = ${width}
+          WHERE file_id = '${fileId}' AND column_id = '${columnId}'
+        `);
+      } else {
+        // Insert new metadata for data columns
+        await conn.query(`
+          INSERT INTO column_metadata (file_id, column_id, column_type, width, created_at)
+          VALUES ('${fileId}', '${columnId}', 'data', ${width}, ${Date.now()})
+        `);
+      }
+    }
+
+    console.log(`[DuckDB Operations] Batch updated ${Object.keys(widths).length} column widths`);
+  } finally {
+    await conn.close();
+  }
+}
+
+/**
+ * Get all column widths for a file (returns map of columnId -> width)
+ */
+export async function getColumnWidths(fileId: string): Promise<Record<string, number>> {
+  const result = await executeQuery<{
+    column_id: string;
+    width: number | null;
+  }>(
+    `SELECT column_id, width FROM column_metadata WHERE file_id = ?`,
+    [fileId]
+  );
+
+  const widths: Record<string, number> = {};
+  for (const row of result) {
+    if (row.width !== null) {
+      widths[row.column_id] = row.width;
+    }
+  }
+
+  return widths;
 }
 
 // ============================================================================

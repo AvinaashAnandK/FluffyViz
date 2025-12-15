@@ -103,6 +103,37 @@ openai:
       description: GPT-5.1 model used in ChatGPT
       recommended: false
 
+    # GPT-5.2 Series (Responses API)
+    - id: gpt-5.2
+      name: GPT-5.2
+      type: text
+      apiMode: responses
+      searchSupport: true
+      contextWindow: 128000
+      maxOutputTokens: 16384
+      description: Latest GPT-5.2 with enhanced capabilities
+      recommended: true
+
+    - id: gpt-5.2-pro
+      name: GPT-5.2 Pro
+      type: text
+      apiMode: responses
+      searchSupport: true
+      contextWindow: 128000
+      maxOutputTokens: 16384
+      description: Most capable GPT-5.2 variant for complex tasks
+      recommended: true
+
+    - id: gpt-5.2-chat-latest
+      name: GPT-5.2 Chat
+      type: text
+      apiMode: responses
+      searchSupport: true
+      contextWindow: 128000
+      maxOutputTokens: 16384
+      description: GPT-5.2 model used in ChatGPT
+      recommended: false
+
     # ==========================================================================
     # GPT-4.1 Series (Responses API)
     # ==========================================================================
@@ -168,6 +199,42 @@ openai:
       maxOutputTokens: 16384
       description: Latest GPT-4o model used in ChatGPT
       recommended: false
+
+    # ==========================================================================
+    # Search-Preview Models (ChatCompletions API - Built-in web search)
+    # ==========================================================================
+    - id: gpt-5-search-api
+      name: GPT-5 Search API
+      type: text
+      apiMode: completions
+      searchSupport: true
+      searchBuiltIn: true
+      contextWindow: 128000
+      maxOutputTokens: 16384
+      description: GPT-5 with built-in web search and citations
+      recommended: true
+
+    - id: gpt-4o-search-preview
+      name: GPT-4o Search Preview
+      type: text
+      apiMode: completions
+      searchSupport: true
+      searchBuiltIn: true
+      contextWindow: 128000
+      maxOutputTokens: 16384
+      description: GPT-4o with built-in web search and citations
+      recommended: true
+
+    - id: gpt-4o-mini-search-preview
+      name: GPT-4o Mini Search Preview
+      type: text
+      apiMode: completions
+      searchSupport: true
+      searchBuiltIn: true
+      contextWindow: 128000
+      maxOutputTokens: 16384
+      description: Fast, affordable GPT-4o Mini with built-in web search
+      recommended: true
 
     # ==========================================================================
     # Audio Models (ChatCompletions API)

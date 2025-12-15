@@ -286,3 +286,134 @@ export const embeddingStorage = new EmbeddingStorage();
 export function generateEmbeddingId(): string {
   return `emb_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 }
+
+/**
+ * Reserved column names that conflict with embedding layer table columns.
+ * These will be prefixed with "original_" if they exist in file_data.
+ */
+const RESERVED_COLUMNS = ['point_id', 'x', 'y', 'composed_text', 'layer_id'];
+
+/**
+ * Create an embedding layer table that JOINs embedding points with file data.
+ * This table is required by EmbeddingAtlas because it uses ALTER TABLE + UPDATE
+ * to create derived category columns for color encoding.
+ *
+ * @param layerId - The embedding layer ID
+ * @param fileId - The file ID to join with
+ * @returns The table name created
+ */
+export async function createLayerTable(layerId: string, fileId: string): Promise<string> {
+  const tableName = `embedding_layer_${layerId.replace(/[^a-zA-Z0-9_]/g, '_')}`;
+  const fileTableName = `file_data_${fileId}`;
+
+  console.log(`[Embedding Storage] Creating layer table ${tableName} for file ${fileId}`);
+
+  try {
+    // Get columns from file_data table
+    const fileColumnsResult = await executeQuery<{ column_name: string; data_type: string }>(`
+      SELECT column_name, data_type
+      FROM information_schema.columns
+      WHERE table_name = '${fileTableName}'
+      ORDER BY ordinal_position
+    `);
+
+    if (fileColumnsResult.length === 0) {
+      throw new Error(`File data table ${fileTableName} not found`);
+    }
+
+    // Build safe column list, handling collisions with reserved names
+    const safeFileDataColumns = fileColumnsResult
+      .map(col => {
+        const colName = col.column_name;
+        if (RESERVED_COLUMNS.includes(colName.toLowerCase())) {
+          return `fd."${colName}" AS "original_${colName}"`;
+        }
+        return `fd."${colName}"`;
+      })
+      .join(',\n    ');
+
+    // Drop existing table if it exists (stale from previous session)
+    await executeQuery(`DROP TABLE IF EXISTS "${tableName}"`);
+
+    // Create layer table with JOIN
+    // Note: We join on source_row_indices[1] because for 1:1 modes (single/multi),
+    // there's exactly one source row per embedding point
+    const createSQL = `
+      CREATE TABLE "${tableName}" AS
+      SELECT
+        ep.point_id,
+        ep.coordinates_2d[1] AS x,
+        ep.coordinates_2d[2] AS y,
+        ep.composed_text,
+        ${safeFileDataColumns}
+      FROM embedding_points ep
+      JOIN "${fileTableName}" fd
+        ON fd.row_index = ep.source_row_indices[1]
+      WHERE ep.layer_id = '${layerId}'
+    `;
+
+    await executeQuery(createSQL);
+
+    // Verify table was created with expected row count
+    const countResult = await executeQuery<{ count: number | bigint }>(`
+      SELECT COUNT(*) as count FROM "${tableName}"
+    `);
+    const rowCount = typeof countResult[0]?.count === 'bigint'
+      ? Number(countResult[0].count)
+      : countResult[0]?.count ?? 0;
+
+    console.log(`[Embedding Storage] ✓ Layer table ${tableName} created with ${rowCount} rows`);
+
+    return tableName;
+
+  } catch (error) {
+    console.error('[Embedding Storage] Error creating layer table:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get the layer table name for a given layer ID.
+ * Does not verify if the table exists.
+ */
+export function getLayerTableName(layerId: string): string {
+  return `embedding_layer_${layerId.replace(/[^a-zA-Z0-9_]/g, '_')}`;
+}
+
+/**
+ * Drop the layer table for a given layer ID.
+ * Called when deleting an embedding layer.
+ */
+export async function dropLayerTable(layerId: string): Promise<void> {
+  const tableName = getLayerTableName(layerId);
+
+  try {
+    await executeQuery(`DROP TABLE IF EXISTS "${tableName}"`);
+    console.log(`[Embedding Storage] ✓ Layer table ${tableName} dropped`);
+  } catch (error) {
+    console.error('[Embedding Storage] Error dropping layer table:', error);
+    // Don't throw - this is cleanup, failure is acceptable
+  }
+}
+
+/**
+ * Get all columns available in a layer table.
+ * Useful for building search queries and UI selectors.
+ */
+export async function getLayerTableColumns(layerId: string): Promise<string[]> {
+  const tableName = getLayerTableName(layerId);
+
+  try {
+    const result = await executeQuery<{ column_name: string }>(`
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_name = '${tableName}'
+      ORDER BY ordinal_position
+    `);
+
+    return result.map(r => r.column_name);
+  } catch (error) {
+    console.error('[Embedding Storage] Error getting layer table columns:', error);
+    return [];
+  }
+}
