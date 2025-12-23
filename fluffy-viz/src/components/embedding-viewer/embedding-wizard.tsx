@@ -1,8 +1,11 @@
 'use client';
 
 /**
- * Multi-step wizard for creating embedding views
- * Guides users through provider selection, composition mode, and generation
+ * Multi-step wizard for creating embedding views (3 steps)
+ *
+ * Step 0: Setup (Name + Provider/Model)
+ * Step 1: Configure (Composition Mode + Column Selection)
+ * Step 2: Review & Generate
  *
  * Composition Modes:
  * - Single Column: Embed one column directly (1:1 mapping)
@@ -21,15 +24,25 @@ import { Badge } from '@/components/ui/badge';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Slider } from '@/components/ui/slider';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
-import { AlertCircle, Plus, X, Info } from 'lucide-react';
+import { AlertCircle, Plus, X, Info, Type, Columns, Layers } from 'lucide-react';
 import type { WizardState, GenerationProgress, ConversationalStrategy } from '@/types/embedding';
+import { DEFAULT_CLUSTER_CONFIG } from '@/types/embedding';
 import { getEmbeddingModelsForProvider, getDefaultEmbeddingModel } from '@/lib/embedding/batch-embedder';
+
+const TOTAL_STEPS = 3;
+
+// Column info with both ID (for data access) and name (for display)
+export interface ColumnInfo {
+  id: string;   // Column ID used in DuckDB
+  name: string; // Display name shown to user
+}
 
 interface EmbeddingWizardProps {
   open: boolean;
   onClose: () => void;
-  columns: string[];
-  rows?: Record<string, unknown>[]; // Optional: for preview count calculation
+  columns: ColumnInfo[];
+  rows?: Record<string, unknown>[]; // Optional: for preview count calculation (paginated sample)
+  totalRows?: number; // Total row count from DuckDB (not paginated)
   onGenerate: (state: WizardState) => Promise<void>;
 }
 
@@ -46,33 +59,49 @@ const SEPARATOR_OPTIONS = [
   { value: ', ', label: 'Comma' },
 ];
 
-export function EmbeddingWizard({ open, onClose, columns, rows = [], onGenerate }: EmbeddingWizardProps) {
+const getInitialState = (): WizardState => ({
+  step: 0,
+  name: '',
+  provider: '',
+  model: '',
+  dimension: 1536,
+  compositionMode: 'single',
+  compositionConfig: {},
+  clusterConfig: { ...DEFAULT_CLUSTER_CONFIG },
+});
+
+export function EmbeddingWizard({ open, onClose, columns, rows = [], totalRows, onGenerate }: EmbeddingWizardProps) {
   const [step, setStep] = useState(0);
-  const [state, setState] = useState<WizardState>({
-    step: 0,
-    name: '',
-    provider: '',
-    model: '',
-    dimension: 1536,
-    compositionMode: 'single',
-    compositionConfig: {},
-  });
+  const [state, setState] = useState<WizardState>(getInitialState());
   const [progress] = useState<GenerationProgress | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
 
+  // Reset wizard state when opened
+  useEffect(() => {
+    if (open) {
+      setStep(0);
+      setState(getInitialState());
+    }
+  }, [open]);
+
   // Auto-detect potential columns for Cross-Row Aggregation
+  // Match by display name, return column ID for storage
   const detectedColumns = useMemo(() => {
     const conversationIdCandidates = ['conversation_id', 'session_id', 'conv_id', 'thread_id', 'chat_id'];
     const sequenceCandidates = ['timestamp', 'turn_number', 'sequence', 'turn', 'index', 'order', 'created_at'];
 
     const foundConvId = columns.find(col =>
-      conversationIdCandidates.some(candidate => col.toLowerCase().includes(candidate.replace('_', '')))
+      conversationIdCandidates.some(candidate => col.name.toLowerCase().includes(candidate.replace('_', '')))
     );
     const foundSequence = columns.find(col =>
-      sequenceCandidates.some(candidate => col.toLowerCase().includes(candidate.replace('_', '')))
+      sequenceCandidates.some(candidate => col.name.toLowerCase().includes(candidate.replace('_', '')))
     );
 
-    return { conversationIdColumn: foundConvId, sequenceColumn: foundSequence };
+    // Return IDs for config storage
+    return {
+      conversationIdColumn: foundConvId?.id,
+      sequenceColumn: foundSequence?.id
+    };
   }, [columns]);
 
   // Apply auto-detected defaults when switching to cross-row mode
@@ -97,30 +126,41 @@ export function EmbeddingWizard({ open, onClose, columns, rows = [], onGenerate 
   }, [state.compositionMode, state.compositionConfig.conversationIdColumn, detectedColumns]);
 
   // Calculate preview count for Cross-Row Aggregation
+  // Uses totalRows (from DuckDB) when available, falls back to rows.length (paginated)
   const previewCount = useMemo(() => {
-    if (state.compositionMode !== 'conversational' || !rows.length) {
-      return { inputRows: rows.length, outputPoints: rows.length };
+    const rowCount = totalRows ?? rows.length;
+
+    if (state.compositionMode !== 'conversational' || rowCount === 0) {
+      return { inputRows: rowCount, outputPoints: rowCount, isApproximate: false };
     }
 
     const convIdCol = state.compositionConfig.conversationIdColumn;
     if (!convIdCol) {
-      return { inputRows: rows.length, outputPoints: rows.length };
+      return { inputRows: rowCount, outputPoints: rowCount, isApproximate: false };
     }
 
-    // Count unique conversation IDs
-    const uniqueConvIds = new Set(rows.map(row => String(row[convIdCol] ?? '')));
     const strategy = state.compositionConfig.strategy || 'full-conversation';
 
-    // For turn-only, history-until, and turn-plus-n, each row becomes a point
-    // For full-conversation, each unique conv ID becomes a point
-    const outputPoints = strategy === 'full-conversation'
-      ? uniqueConvIds.size
-      : rows.length;
+    // For turn-only, history-until, and turn-plus-n, each row becomes a point (1:1)
+    if (strategy !== 'full-conversation') {
+      return { inputRows: rowCount, outputPoints: rowCount, isApproximate: false };
+    }
 
-    return { inputRows: rows.length, outputPoints };
-  }, [state.compositionMode, state.compositionConfig.conversationIdColumn, state.compositionConfig.strategy, rows]);
+    // For full-conversation: estimate unique groups from sample data
+    // Since rows is paginated, we can only estimate the ratio
+    const uniqueConvIds = new Set(rows.map(row => String(row[convIdCol] ?? '')));
+    const sampleRatio = rows.length > 0 ? uniqueConvIds.size / rows.length : 1;
+    const estimatedOutputPoints = Math.round(rowCount * sampleRatio);
+
+    return {
+      inputRows: rowCount,
+      outputPoints: estimatedOutputPoints,
+      isApproximate: totalRows !== undefined && totalRows > rows.length
+    };
+  }, [state.compositionMode, state.compositionConfig.conversationIdColumn, state.compositionConfig.strategy, rows, totalRows]);
 
   // Validation: Check if Group By column has all unique values (no aggregation)
+  // Note: This uses the sample rows for validation, which may not catch all edge cases
   const validationWarnings = useMemo(() => {
     const warnings: string[] = [];
 
@@ -128,8 +168,11 @@ export function EmbeddingWizard({ open, onClose, columns, rows = [], onGenerate 
       const convIdCol = state.compositionConfig.conversationIdColumn;
       const uniqueConvIds = new Set(rows.map(row => String(row[convIdCol] ?? '')));
 
+      // Check if sample data suggests all unique values (no grouping)
       if (uniqueConvIds.size === rows.length) {
-        warnings.push(`"${convIdCol}" has all unique values. No rows will be grouped together. Consider selecting a different Group By column.`);
+        // Show display name in warning, not the ID
+        const colDisplayName = columns.find(c => c.id === convIdCol)?.name ?? convIdCol;
+        warnings.push(`"${colDisplayName}" appears to have all unique values in the sample data. No rows will be grouped together. Consider selecting a different Group By column.`);
       }
     }
 
@@ -138,14 +181,14 @@ export function EmbeddingWizard({ open, onClose, columns, rows = [], onGenerate 
     }
 
     return warnings;
-  }, [state.compositionMode, state.compositionConfig, rows]);
+  }, [state.compositionMode, state.compositionConfig, rows, columns]);
 
   const updateState = useCallback((updates: Partial<WizardState>) => {
     setState(prev => ({ ...prev, ...updates }));
   }, []);
 
   const handleNext = useCallback(() => {
-    setStep(prev => Math.min(prev + 1, 5));
+    setStep(prev => Math.min(prev + 1, TOTAL_STEPS - 1));
   }, []);
 
   const handleBack = useCallback(() => {
@@ -213,9 +256,11 @@ export function EmbeddingWizard({ open, onClose, columns, rows = [], onGenerate 
 
   const renderStep = () => {
     switch (step) {
+      // Step 0: Setup - Name + Provider/Model
       case 0:
         return (
-          <div className="space-y-4">
+          <div className="space-y-6">
+            {/* View Name */}
             <div>
               <Label htmlFor="view-name">View Name</Label>
               <Input
@@ -228,16 +273,12 @@ export function EmbeddingWizard({ open, onClose, columns, rows = [], onGenerate 
                 Give this embedding view a descriptive name
               </p>
             </div>
-          </div>
-        );
 
-      case 1:
-        return (
-          <div className="space-y-4">
+            {/* Provider Selection */}
             <div>
-              <Label>Provider</Label>
+              <Label>Embedding Provider</Label>
               <Select
-                value={state.provider}
+                value={state.provider || undefined}
                 onValueChange={(value) => {
                   const defaultModel = getDefaultEmbeddingModel(value);
                   updateState({ provider: value, model: defaultModel });
@@ -254,11 +295,12 @@ export function EmbeddingWizard({ open, onClose, columns, rows = [], onGenerate 
               </Select>
             </div>
 
+            {/* Model Selection (shows when provider selected) */}
             {state.provider && (
               <div>
                 <Label>Model</Label>
                 <Select
-                  value={state.model}
+                  value={state.model || undefined}
                   onValueChange={(value) => updateState({ model: value })}
                 >
                   <SelectTrigger>
@@ -275,45 +317,52 @@ export function EmbeddingWizard({ open, onClose, columns, rows = [], onGenerate 
           </div>
         );
 
-      case 2:
+      // Step 1: Configure - Composition Mode + Column Configuration
+      case 1:
         return (
-          <div className="space-y-4">
-            <Label>What do you want to embed?</Label>
-            <div className="space-y-2">
-              <Card
-                className={`p-4 cursor-pointer border-2 transition-colors ${state.compositionMode === 'single' ? 'border-primary bg-primary/5' : 'border-border hover:border-muted-foreground/50'}`}
-                onClick={() => updateState({ compositionMode: 'single', compositionConfig: {} })}
-              >
-                <h3 className="font-medium">Single Column</h3>
-                <p className="text-sm text-muted-foreground">Embed one existing column directly</p>
-                <p className="text-xs text-muted-foreground mt-1">1 row = 1 point</p>
-              </Card>
+          <div className="space-y-6">
+            {/* Mode Selection */}
+            <div>
+              <Label className="mb-3 block">What do you want to embed?</Label>
+              <div className="grid grid-cols-3 gap-3">
+                <Card
+                  className={`p-4 cursor-pointer border-2 transition-colors flex flex-col items-center text-center ${state.compositionMode === 'single' ? 'border-primary bg-primary/5' : 'border-border hover:border-muted-foreground/50'}`}
+                  onClick={() => updateState({ compositionMode: 'single', compositionConfig: {} })}
+                >
+                  <Type className="h-6 w-6 mb-2 text-muted-foreground" />
+                  <h3 className="font-medium text-sm">Single Column</h3>
+                  <p className="text-xs text-muted-foreground mt-1">1 row = 1 point</p>
+                </Card>
 
-              <Card
-                className={`p-4 cursor-pointer border-2 transition-colors ${state.compositionMode === 'multi' ? 'border-primary bg-primary/5' : 'border-border hover:border-muted-foreground/50'}`}
-                onClick={() => updateState({ compositionMode: 'multi', compositionConfig: { columns: [], separator: '\n\n' } })}
-              >
-                <h3 className="font-medium">Multi-Column Concatenation</h3>
-                <p className="text-sm text-muted-foreground">Combine multiple columns from each row</p>
-                <p className="text-xs text-muted-foreground mt-1">1 row = 1 point</p>
-              </Card>
+                <Card
+                  className={`p-4 cursor-pointer border-2 transition-colors flex flex-col items-center text-center ${state.compositionMode === 'multi' ? 'border-primary bg-primary/5' : 'border-border hover:border-muted-foreground/50'}`}
+                  onClick={() => updateState({ compositionMode: 'multi', compositionConfig: { columns: [], separator: '\n\n' } })}
+                >
+                  <Columns className="h-6 w-6 mb-2 text-muted-foreground" />
+                  <h3 className="font-medium text-sm">Multi-Column</h3>
+                  <p className="text-xs text-muted-foreground mt-1">Combine columns</p>
+                </Card>
 
-              <Card
-                className={`p-4 cursor-pointer border-2 transition-colors ${state.compositionMode === 'conversational' ? 'border-primary bg-primary/5' : 'border-border hover:border-muted-foreground/50'}`}
-                onClick={() => updateState({ compositionMode: 'conversational', compositionConfig: {} })}
-              >
-                <h3 className="font-medium">Cross-Row Aggregation</h3>
-                <p className="text-sm text-muted-foreground">Group rows together (e.g., conversation turns)</p>
-                <p className="text-xs text-muted-foreground mt-1">N rows = 1 point</p>
-              </Card>
+                <Card
+                  className={`p-4 cursor-pointer border-2 transition-colors flex flex-col items-center text-center ${state.compositionMode === 'conversational' ? 'border-primary bg-primary/5' : 'border-border hover:border-muted-foreground/50'}`}
+                  onClick={() => updateState({ compositionMode: 'conversational', compositionConfig: {} })}
+                >
+                  <Layers className="h-6 w-6 mb-2 text-muted-foreground" />
+                  <h3 className="font-medium text-sm">Cross-Row</h3>
+                  <p className="text-xs text-muted-foreground mt-1">N rows = 1 point</p>
+                </Card>
+              </div>
+            </div>
+
+            {/* Column Configuration (inline based on mode) */}
+            <div className="border-t pt-4">
+              {renderCompositionConfig()}
             </div>
           </div>
         );
 
-      case 3:
-        return renderCompositionConfig();
-
-      case 4:
+      // Step 2: Review & Generate
+      case 2:
         return (
           <div className="space-y-4">
             <h3 className="font-medium">Review Configuration</h3>
@@ -327,13 +376,107 @@ export function EmbeddingWizard({ open, onClose, columns, rows = [], onGenerate 
                 'Cross-Row Aggregation'
               }</p>
 
+              {/* Show selected columns based on mode - display names, not IDs */}
+              {state.compositionMode === 'single' && state.compositionConfig.sourceColumn && (
+                <p><strong>Column:</strong> {columns.find(c => c.id === state.compositionConfig.sourceColumn)?.name ?? state.compositionConfig.sourceColumn}</p>
+              )}
+              {state.compositionMode === 'multi' && state.compositionConfig.columns?.length && (
+                <p><strong>Columns:</strong> {state.compositionConfig.columns.map(colId => columns.find(c => c.id === colId)?.name ?? colId).join(', ')}</p>
+              )}
+              {state.compositionMode === 'conversational' && (
+                <>
+                  <p><strong>Group By:</strong> {columns.find(c => c.id === state.compositionConfig.conversationIdColumn)?.name ?? state.compositionConfig.conversationIdColumn}</p>
+                  <p><strong>Order By:</strong> {columns.find(c => c.id === state.compositionConfig.sequenceColumn)?.name ?? state.compositionConfig.sequenceColumn}</p>
+                  <p><strong>Text Columns:</strong> {state.compositionConfig.turnFormatColumns?.map(colId => columns.find(c => c.id === colId)?.name ?? colId).join(', ')}</p>
+                </>
+              )}
+
+              {/* Clustering Settings */}
+              <div className="mt-4 p-4 border rounded-lg space-y-4">
+                <h4 className="font-medium text-sm">Clustering Settings (HDBSCAN)</h4>
+                <p className="text-xs text-muted-foreground">
+                  Automatically group semantically similar conversations into clusters.
+                </p>
+
+                <div className="space-y-4">
+                  <div>
+                    <div className="flex justify-between items-center mb-2">
+                      <Label className="text-xs">UMAP Neighbors</Label>
+                      <span className="text-xs text-muted-foreground font-mono">
+                        {state.clusterConfig.nNeighbors}
+                      </span>
+                    </div>
+                    <Slider
+                      value={[state.clusterConfig.nNeighbors]}
+                      onValueChange={([val]) => setState(prev => ({
+                        ...prev,
+                        clusterConfig: { ...prev.clusterConfig, nNeighbors: val }
+                      }))}
+                      min={15}
+                      max={100}
+                      step={5}
+                      className="w-full"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Higher = more global structure, lower noise (15-100)
+                    </p>
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between items-center mb-2">
+                      <Label className="text-xs">Min Cluster Size</Label>
+                      <span className="text-xs text-muted-foreground font-mono">
+                        {state.clusterConfig.minClusterSize}
+                      </span>
+                    </div>
+                    <Slider
+                      value={[state.clusterConfig.minClusterSize]}
+                      onValueChange={([val]) => setState(prev => ({
+                        ...prev,
+                        clusterConfig: { ...prev.clusterConfig, minClusterSize: val }
+                      }))}
+                      min={5}
+                      max={50}
+                      step={1}
+                      className="w-full"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Minimum conversations needed to form a cluster (5-50)
+                    </p>
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between items-center mb-2">
+                      <Label className="text-xs">Min Samples</Label>
+                      <span className="text-xs text-muted-foreground font-mono">
+                        {state.clusterConfig.minSamples}
+                      </span>
+                    </div>
+                    <Slider
+                      value={[state.clusterConfig.minSamples]}
+                      onValueChange={([val]) => setState(prev => ({
+                        ...prev,
+                        clusterConfig: { ...prev.clusterConfig, minSamples: val }
+                      }))}
+                      min={1}
+                      max={15}
+                      step={1}
+                      className="w-full"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Core point threshold - lower values create more clusters (1-15)
+                    </p>
+                  </div>
+                </div>
+              </div>
+
               {/* Preview Count */}
-              {rows.length > 0 && (
+              {previewCount.inputRows > 0 && (
                 <div className="mt-4 p-3 bg-muted rounded-md">
                   <div className="flex items-center gap-2">
                     <Info className="h-4 w-4 text-muted-foreground" />
                     <span className="font-medium">
-                      {previewCount.inputRows} rows → {previewCount.outputPoints} embedding points
+                      {previewCount.inputRows} rows → {previewCount.isApproximate ? '~' : ''}{previewCount.outputPoints} embedding points
                     </span>
                   </div>
                 </div>
@@ -350,20 +493,15 @@ export function EmbeddingWizard({ open, onClose, columns, rows = [], onGenerate 
                   ))}
                 </div>
               )}
-            </div>
-          </div>
-        );
 
-      case 5:
-        return (
-          <div className="space-y-4">
-            <h3 className="font-medium">Generating Embeddings...</h3>
-            {progress && (
-              <>
-                <Progress value={(progress.current / progress.total) * 100} />
-                <p className="text-sm text-muted-foreground">{progress.message}</p>
-              </>
-            )}
+              {/* Progress (shown during generation) */}
+              {isGenerating && progress && (
+                <div className="mt-4 space-y-2">
+                  <Progress value={(progress.current / progress.total) * 100} />
+                  <p className="text-sm text-muted-foreground">{progress.message}</p>
+                </div>
+              )}
+            </div>
           </div>
         );
 
@@ -380,7 +518,7 @@ export function EmbeddingWizard({ open, onClose, columns, rows = [], onGenerate 
             <div>
               <Label>Select Column to Embed</Label>
               <Select
-                value={state.compositionConfig.sourceColumn}
+                value={state.compositionConfig.sourceColumn || undefined}
                 onValueChange={(value) =>
                   updateState({ compositionConfig: { ...state.compositionConfig, sourceColumn: value } })
                 }
@@ -390,7 +528,7 @@ export function EmbeddingWizard({ open, onClose, columns, rows = [], onGenerate 
                 </SelectTrigger>
                 <SelectContent>
                   {columns.map(col => (
-                    <SelectItem key={col} value={col}>{col}</SelectItem>
+                    <SelectItem key={col.id} value={col.id}>{col.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -411,33 +549,36 @@ export function EmbeddingWizard({ open, onClose, columns, rows = [], onGenerate 
               {/* Selected columns as badges */}
               {(state.compositionConfig.columns?.length || 0) > 0 && (
                 <div className="flex flex-wrap gap-2 mb-3">
-                  {state.compositionConfig.columns?.map(col => (
-                    <Badge key={col} variant="secondary" className="gap-1 py-1">
-                      {col}
-                      <button
-                        onClick={() => removeColumn(col)}
-                        className="ml-1 hover:bg-muted rounded-sm"
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
-                    </Badge>
-                  ))}
+                  {state.compositionConfig.columns?.map(colId => {
+                    const colInfo = columns.find(c => c.id === colId);
+                    return (
+                      <Badge key={colId} variant="secondary" className="gap-1 py-1">
+                        {colInfo?.name ?? colId}
+                        <button
+                          onClick={() => removeColumn(colId)}
+                          className="ml-1 hover:bg-muted rounded-sm"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </Badge>
+                    );
+                  })}
                 </div>
               )}
 
-              {/* Add column selector */}
-              <Select value="" onValueChange={addColumn}>
+              {/* Add column selector - use undefined for uncontrolled behavior */}
+              <Select value={undefined} onValueChange={addColumn}>
                 <SelectTrigger>
                   <SelectValue placeholder="Add column..." />
                 </SelectTrigger>
                 <SelectContent>
                   {columns
-                    .filter(col => !state.compositionConfig.columns?.includes(col))
+                    .filter(col => !state.compositionConfig.columns?.includes(col.id))
                     .map(col => (
-                      <SelectItem key={col} value={col}>
+                      <SelectItem key={col.id} value={col.id}>
                         <div className="flex items-center gap-2">
                           <Plus className="w-3 h-3" />
-                          {col}
+                          {col.name}
                         </div>
                       </SelectItem>
                     ))}
@@ -496,7 +637,7 @@ export function EmbeddingWizard({ open, onClose, columns, rows = [], onGenerate 
             <div>
               <Label className="text-sm font-medium mb-2 block">Group By Column</Label>
               <Select
-                value={state.compositionConfig.conversationIdColumn}
+                value={state.compositionConfig.conversationIdColumn || undefined}
                 onValueChange={(value) =>
                   updateState({
                     compositionConfig: { ...state.compositionConfig, conversationIdColumn: value }
@@ -508,7 +649,7 @@ export function EmbeddingWizard({ open, onClose, columns, rows = [], onGenerate 
                 </SelectTrigger>
                 <SelectContent>
                   {columns.map(col => (
-                    <SelectItem key={col} value={col}>{col}</SelectItem>
+                    <SelectItem key={col.id} value={col.id}>{col.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -521,7 +662,7 @@ export function EmbeddingWizard({ open, onClose, columns, rows = [], onGenerate 
             <div>
               <Label className="text-sm font-medium mb-2 block">Order By Column</Label>
               <Select
-                value={state.compositionConfig.sequenceColumn}
+                value={state.compositionConfig.sequenceColumn || undefined}
                 onValueChange={(value) =>
                   updateState({
                     compositionConfig: { ...state.compositionConfig, sequenceColumn: value }
@@ -533,7 +674,7 @@ export function EmbeddingWizard({ open, onClose, columns, rows = [], onGenerate 
                 </SelectTrigger>
                 <SelectContent>
                   {columns.map(col => (
-                    <SelectItem key={col} value={col}>{col}</SelectItem>
+                    <SelectItem key={col.id} value={col.id}>{col.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -549,37 +690,40 @@ export function EmbeddingWizard({ open, onClose, columns, rows = [], onGenerate 
               {/* Selected columns as badges */}
               {(state.compositionConfig.turnFormatColumns?.length || 0) > 0 && (
                 <div className="flex flex-wrap gap-2 mb-3">
-                  {state.compositionConfig.turnFormatColumns?.map(col => (
-                    <Badge key={col} variant="secondary" className="gap-1 py-1">
-                      {col}
-                      <button
-                        onClick={() => removeTurnFormatColumn(col)}
-                        className="ml-1 hover:bg-muted rounded-sm"
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
-                    </Badge>
-                  ))}
+                  {state.compositionConfig.turnFormatColumns?.map(colId => {
+                    const colInfo = columns.find(c => c.id === colId);
+                    return (
+                      <Badge key={colId} variant="secondary" className="gap-1 py-1">
+                        {colInfo?.name ?? colId}
+                        <button
+                          onClick={() => removeTurnFormatColumn(colId)}
+                          className="ml-1 hover:bg-muted rounded-sm"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </Badge>
+                    );
+                  })}
                 </div>
               )}
 
-              {/* Add column selector */}
-              <Select value="" onValueChange={addTurnFormatColumn}>
+              {/* Add column selector - use undefined for uncontrolled behavior */}
+              <Select value={undefined} onValueChange={addTurnFormatColumn}>
                 <SelectTrigger>
                   <SelectValue placeholder="Add column..." />
                 </SelectTrigger>
                 <SelectContent>
                   {columns
                     .filter(col =>
-                      col !== state.compositionConfig.conversationIdColumn &&
-                      col !== state.compositionConfig.sequenceColumn &&
-                      !state.compositionConfig.turnFormatColumns?.includes(col)
+                      col.id !== state.compositionConfig.conversationIdColumn &&
+                      col.id !== state.compositionConfig.sequenceColumn &&
+                      !state.compositionConfig.turnFormatColumns?.includes(col.id)
                     )
                     .map(col => (
-                      <SelectItem key={col} value={col}>
+                      <SelectItem key={col.id} value={col.id}>
                         <div className="flex items-center gap-2">
                           <Plus className="w-3 h-3" />
-                          {col}
+                          {col.name}
                         </div>
                       </SelectItem>
                     ))}
@@ -687,12 +831,12 @@ export function EmbeddingWizard({ open, onClose, columns, rows = [], onGenerate 
             </div>
 
             {/* Preview Count */}
-            {rows.length > 0 && state.compositionConfig.conversationIdColumn && (
+            {previewCount.inputRows > 0 && state.compositionConfig.conversationIdColumn && (
               <div className="p-3 bg-muted rounded-md">
                 <div className="flex items-center gap-2">
                   <Info className="h-4 w-4 text-muted-foreground" />
                   <span className="text-sm">
-                    <strong>{previewCount.inputRows}</strong> rows → <strong>{previewCount.outputPoints}</strong> embedding points
+                    <strong>{previewCount.inputRows}</strong> rows → <strong>{previewCount.isApproximate ? '~' : ''}{previewCount.outputPoints}</strong> embedding points
                   </span>
                 </div>
               </div>
@@ -719,13 +863,13 @@ export function EmbeddingWizard({ open, onClose, columns, rows = [], onGenerate 
 
   const canProceed = () => {
     switch (step) {
+      // Step 0: Name + Provider + Model required
       case 0:
-        return state.name.trim().length > 0;
+        return state.name.trim().length > 0 && !!state.provider && !!state.model;
+
+      // Step 1: Composition mode + required config
       case 1:
-        return state.provider && state.model;
-      case 2:
-        return state.compositionMode;
-      case 3:
+        if (!state.compositionMode) return false;
         if (state.compositionMode === 'single') {
           return !!state.compositionConfig.sourceColumn;
         }
@@ -740,12 +884,17 @@ export function EmbeddingWizard({ open, onClose, columns, rows = [], onGenerate 
           );
         }
         return true;
-      case 4:
+
+      // Step 2: Review - always can proceed
+      case 2:
         return true;
+
       default:
         return false;
     }
   };
+
+  const stepTitles = ['Setup', 'Configure', 'Review'];
 
   return (
     <Sheet open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
@@ -753,11 +902,11 @@ export function EmbeddingWizard({ open, onClose, columns, rows = [], onGenerate 
         <SheetHeader>
           <SheetTitle>Create Embedding View</SheetTitle>
           <SheetDescription>
-            Step {step + 1} of 5
+            Step {step + 1} of {TOTAL_STEPS}: {stepTitles[step]}
           </SheetDescription>
         </SheetHeader>
 
-        <div className="py-6">
+        <div className="px-6 py-6">
           {renderStep()}
         </div>
 
@@ -765,12 +914,12 @@ export function EmbeddingWizard({ open, onClose, columns, rows = [], onGenerate 
           <Button variant="outline" onClick={handleBack} disabled={step === 0 || isGenerating}>
             Back
           </Button>
-          {step < 4 ? (
+          {step < TOTAL_STEPS - 1 ? (
             <Button onClick={handleNext} disabled={!canProceed() || isGenerating}>
               Continue
             </Button>
           ) : (
-            <Button onClick={handleGenerate} disabled={isGenerating}>
+            <Button onClick={handleGenerate} disabled={isGenerating || !canProceed()}>
               {isGenerating ? 'Generating...' : 'Generate Embeddings'}
             </Button>
           )}

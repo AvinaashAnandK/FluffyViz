@@ -59,10 +59,64 @@ export async function initializeSchema(): Promise<void> {
         composed_text TEXT,
         label TEXT,
         source_row_indices INTEGER[],
+        neighbors JSON,
+        cluster_id INTEGER DEFAULT -1,
         PRIMARY KEY (layer_id, point_id)
       )
     `);
     console.log('[DuckDB Schema] ✓ Embedding points table created');
+
+    // Migration: Add neighbors column if it doesn't exist
+    try {
+      const neighborsColumn = await executeQuery<{ column_name: string }>(`
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = 'embedding_points'
+          AND column_name = 'neighbors'
+      `);
+
+      if (neighborsColumn.length === 0) {
+        await executeQuery(`ALTER TABLE embedding_points ADD COLUMN neighbors JSON`);
+        console.log('[DuckDB Schema] ✓ Neighbors column migration completed');
+      }
+    } catch (error) {
+      console.warn('[DuckDB Schema] Neighbors column migration error:', error);
+    }
+
+    // Migration: Add cluster_id column to embedding_points if it doesn't exist
+    try {
+      const clusterIdColumn = await executeQuery<{ column_name: string }>(`
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = 'embedding_points'
+          AND column_name = 'cluster_id'
+      `);
+
+      if (clusterIdColumn.length === 0) {
+        await executeQuery(`ALTER TABLE embedding_points ADD COLUMN cluster_id INTEGER DEFAULT -1`);
+        console.log('[DuckDB Schema] ✓ Cluster ID column migration completed');
+      }
+    } catch (error) {
+      console.warn('[DuckDB Schema] Cluster ID column migration error:', error);
+    }
+
+    // Migration: Add cluster_config and cluster_stats columns to embedding_layers if they don't exist
+    try {
+      const clusterConfigColumn = await executeQuery<{ column_name: string }>(`
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = 'embedding_layers'
+          AND column_name = 'cluster_config'
+      `);
+
+      if (clusterConfigColumn.length === 0) {
+        await executeQuery(`ALTER TABLE embedding_layers ADD COLUMN cluster_config JSON`);
+        await executeQuery(`ALTER TABLE embedding_layers ADD COLUMN cluster_stats JSON`);
+        console.log('[DuckDB Schema] ✓ Cluster config/stats columns migration completed');
+      }
+    } catch (error) {
+      console.warn('[DuckDB Schema] Cluster config/stats columns migration error:', error);
+    }
 
     // Create column_metadata table for AI column configuration
     await executeQuery(`
@@ -233,7 +287,8 @@ export async function initializeSchema(): Promise<void> {
         coordinates_2d[2] AS y,
         composed_text,
         label,
-        source_row_indices
+        source_row_indices,
+        cluster_id
       FROM embedding_points
     `);
     console.log('[DuckDB Schema] ✓ Embedding points view created');

@@ -31,18 +31,31 @@ const nextConfig: NextConfig = {
 
     // For client build, handle embedding-atlas asset module compatibility
     if (!isServer) {
-      // Ignore problematic worker file imports during static analysis
-      config.plugins.push(
-        new webpack.NormalModuleReplacementPlugin(
-          /\.worker\.js$/,
-          (resource: any) => {
-            if (resource.request.includes('embedding-atlas')) {
-              // Keep the request as-is, but mark for special handling
-              resource.request = resource.request;
-            }
-          }
-        )
-      );
+      // Override default asset module rules for embedding-atlas
+      // The package uses `new URL(...)` patterns that webpack processes as assets
+      // Need to disable asset module processing for embedding-atlas entirely
+      config.module.rules.unshift({
+        test: /[\\/]embedding-atlas[\\/]/,
+        resolve: {
+          fullySpecified: false,
+        },
+        rules: [
+          {
+            // Skip asset module processing for data URLs in embedding-atlas
+            type: 'javascript/auto',
+            resourceQuery: { not: [/url/] },
+          },
+        ],
+      });
+
+      // Disable asset module filename validation for data URLs
+      config.module.parser = {
+        ...config.module.parser,
+        javascript: {
+          ...config.module.parser?.javascript,
+          url: false, // Disable new URL() handling in JS
+        },
+      };
     }
 
     return config;

@@ -558,7 +558,8 @@ export async function generateCompletion(
     if (result.toolResults) {
       for (const toolResult of result.toolResults) {
         if (toolResult.toolName?.includes('search') || toolResult.toolName?.includes('web')) {
-          const searchResult = toolResult.result as any
+          // TypeScript workaround: AI SDK types don't include 'result' but it exists at runtime
+          const searchResult = (toolResult as any).result
           console.log('[AI Inference] Tool result for', toolResult.toolName, ':', typeof searchResult)
           if (searchResult?.sources) {
             for (const s of searchResult.sources) {
@@ -758,7 +759,8 @@ export async function generateStructuredCompletion(
       if (result.toolResults) {
         for (const toolResult of result.toolResults) {
           if (toolResult.toolName?.includes('search') || toolResult.toolName?.includes('web')) {
-            const searchResult = toolResult.result as any
+            // TypeScript workaround: AI SDK types don't include 'result' but it exists at runtime
+            const searchResult = (toolResult as any).result
             if (searchResult?.sources) {
               for (const s of searchResult.sources) {
                 sources.push({

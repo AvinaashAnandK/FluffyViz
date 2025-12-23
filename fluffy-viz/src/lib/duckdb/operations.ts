@@ -214,6 +214,15 @@ export async function getFileRowCount(fileId: string): Promise<number> {
 }
 
 /**
+ * Get ALL rows from a file table (no pagination)
+ * Used for embedding generation which needs the complete dataset
+ */
+export async function getAllFileRows(fileId: string): Promise<RowData[]> {
+  const tableName = `file_data_${fileId}`;
+  return await executeQuery<RowData>(`SELECT * FROM "${tableName}" ORDER BY row_index ASC`);
+}
+
+/**
  * Update a single cell value
  */
 export async function updateCellValue(

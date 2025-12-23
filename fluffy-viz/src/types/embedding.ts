@@ -33,6 +33,11 @@ export type CompositionConfig =
   | { mode: 'multi'; config: MultiCompositionConfig }
   | { mode: 'conversational'; config: ConversationalCompositionConfig };
 
+export interface NeighborData {
+  ids: string[]; // IDs of k-nearest neighbors
+  distances: number[]; // Distances to each neighbor
+}
+
 export interface EmbeddingPoint {
   id: string; // "point_0"
   embedding: number[]; // The vector [0.123, -0.456, ...]
@@ -41,6 +46,29 @@ export interface EmbeddingPoint {
   label?: string; // For conversation-level: the conversation ID
   composedText: string; // The text that was embedded
   metadata?: Record<string, unknown>; // Aggregated metadata for conversation-level
+  neighbors?: NeighborData; // Pre-computed k-nearest neighbors for fast search
+  clusterId?: number; // HDBSCAN cluster assignment (-1 = noise/outlier)
+}
+
+// Clustering configuration
+export interface ClusterConfig {
+  minClusterSize: number;  // Minimum points to form a cluster (default: 10, range: 5-50)
+  minSamples: number;      // Core point threshold (default: 5, range: 1-15)
+  nNeighbors: number;      // UMAP n_neighbors for clustering projection (default: 30, range: 15-100)
+}
+
+export const DEFAULT_CLUSTER_CONFIG: ClusterConfig = {
+  minClusterSize: 10,  // Reasonable default for most datasets
+  minSamples: 5,       // Core point threshold
+  nNeighbors: 30,      // UMAP neighborhood size for clustering
+};
+
+// Cluster statistics after running HDBSCAN
+export interface ClusterStats {
+  clusterCount: number;              // Number of clusters found (excluding noise)
+  noiseCount: number;                // Number of noise/outlier points
+  noisePercentage: number;           // Percentage of points that are noise
+  clusterSizes: Record<number, number>;  // Cluster ID → point count (JSON-serializable)
 }
 
 export interface EmbeddingLayerMetadata {
@@ -64,6 +92,10 @@ export interface ActiveEmbeddingLayer {
 
   compositionMode: CompositionMode;
   compositionConfig: CompositionConfig;
+
+  // Clustering config and results
+  clusterConfig?: ClusterConfig;
+  clusterStats?: ClusterStats;
 
   // The actual embeddings + visualization data
   points: EmbeddingPoint[];
@@ -96,10 +128,11 @@ export interface WizardState {
   dimension: number;
   compositionMode: CompositionMode;
   compositionConfig: Partial<SingleCompositionConfig & MultiCompositionConfig & ConversationalCompositionConfig>;
+  clusterConfig: ClusterConfig;
 }
 
 export interface GenerationProgress {
-  phase: 'composing' | 'embedding' | 'projecting' | 'storing' | 'complete';
+  phase: 'composing' | 'embedding' | 'clustering' | 'projecting' | 'storing' | 'complete';
   current: number;
   total: number;
   message: string;

@@ -1,6 +1,7 @@
 /**
  * Batch embedding generation using Vercel AI SDK
  * Supports OpenAI, Cohere, and Voyage AI providers
+ * Uses tiktoken for accurate token counting (OpenAI models)
  */
 
 import { embedMany } from 'ai';
@@ -8,9 +9,121 @@ import { createOpenAI } from '@ai-sdk/openai';
 import { createCohere } from '@ai-sdk/cohere';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createMistral } from '@ai-sdk/mistral';
+import { get_encoding, type Tiktoken } from 'tiktoken';
 import type { GenerationProgress } from '@/types/embedding';
 
 const BATCH_SIZE = 100; // Process 100 texts per batch
+
+/**
+ * Max token limits per embedding model
+ */
+const MODEL_MAX_TOKENS: Record<string, number> = {
+  // OpenAI - 8191 tokens max
+  'text-embedding-3-small': 8191,
+  'text-embedding-3-large': 8191,
+  'text-embedding-ada-002': 8191,
+  // Cohere - 512 tokens max for embed-v3
+  'embed-english-v3.0': 512,
+  'embed-multilingual-v3.0': 512,
+  'embed-english-light-v3.0': 512,
+  'embed-multilingual-light-v3.0': 512,
+  // Google - 2048 tokens
+  'text-embedding-004': 2048,
+  // Mistral - 8192 tokens
+  'mistral-embed': 8192,
+};
+
+// Cached tiktoken encoder (lazy initialized)
+let tiktokenEncoder: Tiktoken | null = null;
+
+/**
+ * Get or create tiktoken encoder
+ * Uses cl100k_base which is used by text-embedding-3-* models
+ */
+function getEncoder(): Tiktoken {
+  if (!tiktokenEncoder) {
+    tiktokenEncoder = get_encoding('cl100k_base');
+  }
+  return tiktokenEncoder;
+}
+
+/**
+ * Free the tiktoken encoder to release WASM memory
+ * Call this after embedding generation is complete, before running UMAP
+ * This helps prevent WASM memory conflicts between tiktoken and embedding-atlas
+ */
+export async function freeTiktokenEncoder(): Promise<void> {
+  if (tiktokenEncoder) {
+    console.log('[Batch Embedder] Freeing tiktoken encoder...');
+    tiktokenEncoder.free();
+    tiktokenEncoder = null;
+
+    // Give the browser a chance to garbage collect the WASM memory
+    await new Promise(resolve => setTimeout(resolve, 100));
+    console.log('[Batch Embedder] Tiktoken encoder freed');
+  }
+}
+
+/**
+ * Count tokens using tiktoken (for OpenAI models)
+ */
+function countTokens(text: string): number {
+  const encoder = getEncoder();
+  return encoder.encode(text).length;
+}
+
+/**
+ * Token count scaling factors relative to OpenAI's cl100k_base tokenizer.
+ * A factor < 1.0 means that provider's tokenizer produces MORE tokens than OpenAI
+ * for the same text, so we need to be more conservative.
+ */
+const TOKENIZER_SCALE_FACTOR: Record<string, number> = {
+  openai: 1.0,     // Exact - we use tiktoken
+  cohere: 0.9,     // Cohere's BPE is slightly less efficient
+  google: 0.85,    // SentencePiece can be less efficient for some text
+  mistral: 0.95,   // Very similar to OpenAI's tokenizer
+};
+
+/**
+ * Truncate text to fit within token limit using tiktoken
+ * Uses binary search for efficiency
+ */
+function truncateToTokenLimit(text: string, model: string, provider: string): string {
+  const maxTokens = MODEL_MAX_TOKENS[model] || 8000;
+  const providerKey = provider.toLowerCase();
+
+  // Get scale factor (default to conservative 0.8 for unknown providers)
+  const scaleFactor = TOKENIZER_SCALE_FACTOR[providerKey] ?? 0.8;
+
+  // Adjust max tokens based on provider's tokenizer efficiency
+  const adjustedMaxTokens = Math.floor(maxTokens * scaleFactor);
+
+  const tokenCount = countTokens(text);
+
+  if (tokenCount <= adjustedMaxTokens) {
+    return text;
+  }
+
+  // Binary search to find the right truncation point
+  let low = 0;
+  let high = text.length;
+  const suffix = ' [truncated...]';
+  const targetTokens = adjustedMaxTokens - countTokens(suffix);
+
+  while (low < high) {
+    const mid = Math.floor((low + high + 1) / 2);
+    const truncated = text.substring(0, mid);
+    const tokens = countTokens(truncated);
+
+    if (tokens <= targetTokens) {
+      low = mid;
+    } else {
+      high = mid - 1;
+    }
+  }
+
+  return text.substring(0, low) + suffix;
+}
 
 export interface BatchEmbedderConfig {
   provider: string;
@@ -65,39 +178,93 @@ export async function batchEmbed(
   texts: string[],
   config: BatchEmbedderConfig
 ): Promise<EmbeddingResult> {
+  // Validate, clean, and truncate input texts
+  // OpenAI rejects empty strings with '$.input' is invalid error
+  const emptyIndices: number[] = [];
+  const truncatedIndices: number[] = [];
+
+  const cleanedTexts = texts.map((text, i) => {
+    if (!text || text.trim().length === 0) {
+      emptyIndices.push(i);
+      return '[empty]'; // Placeholder for empty texts
+    }
+
+    // Truncate to fit model's token limit
+    const truncated = truncateToTokenLimit(text, config.model, config.provider);
+    if (truncated.length < text.length) {
+      truncatedIndices.push(i);
+    }
+    return truncated;
+  });
+
+  // Log summary of empty texts
+  if (emptyIndices.length > 0) {
+    console.warn(`[Batch Embedder] Found ${emptyIndices.length}/${texts.length} empty texts, replacing with placeholder`);
+    if (emptyIndices.length <= 10) {
+      console.warn(`[Batch Embedder] Empty indices:`, emptyIndices);
+    } else {
+      const firstFive = emptyIndices.slice(0, 5);
+      const lastFive = emptyIndices.slice(-5);
+      console.warn(`[Batch Embedder] Empty indices (first 5):`, firstFive);
+      console.warn(`[Batch Embedder] Empty indices (last 5):`, lastFive);
+    }
+  }
+
+  // Log summary of truncated texts
+  if (truncatedIndices.length > 0) {
+    const maxTokens = MODEL_MAX_TOKENS[config.model] || 8000;
+    console.warn(`[Batch Embedder] Truncated ${truncatedIndices.length}/${texts.length} texts to fit ${config.model} limit (${maxTokens} tokens)`);
+    if (truncatedIndices.length <= 10) {
+      console.warn(`[Batch Embedder] Truncated indices:`, truncatedIndices);
+    } else {
+      console.warn(`[Batch Embedder] First truncated at index ${truncatedIndices[0]}, last at ${truncatedIndices[truncatedIndices.length - 1]}`);
+    }
+  }
+
   const allEmbeddings: number[][] = [];
-  const totalBatches = Math.ceil(texts.length / BATCH_SIZE);
+  const totalBatches = Math.ceil(cleanedTexts.length / BATCH_SIZE);
 
   try {
     const embeddingModel = getEmbeddingModel(config.provider, config.model, config.apiKey);
 
     for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
       const startIdx = batchIndex * BATCH_SIZE;
-      const endIdx = Math.min(startIdx + BATCH_SIZE, texts.length);
-      const batch = texts.slice(startIdx, endIdx);
+      const endIdx = Math.min(startIdx + BATCH_SIZE, cleanedTexts.length);
+      const batch = cleanedTexts.slice(startIdx, endIdx);
 
       // Report progress
       config.onProgress?.({
         phase: 'embedding',
         current: startIdx,
-        total: texts.length,
+        total: cleanedTexts.length,
         message: `Embedding batch ${batchIndex + 1}/${totalBatches}...`,
       });
 
       // Generate embeddings for batch
-      const { embeddings } = await embedMany({
-        model: embeddingModel,
-        values: batch,
-      });
+      try {
+        const { embeddings } = await embedMany({
+          model: embeddingModel,
+          values: batch,
+        });
 
-      allEmbeddings.push(...embeddings);
+        allEmbeddings.push(...embeddings);
+      } catch (batchError) {
+        // Log detailed info about the failing batch
+        const charLengths = batch.map(t => t.length);
+        const maxLen = Math.max(...charLengths);
+        const maxIdx = charLengths.indexOf(maxLen);
+        console.error(`[Batch Embedder] Batch ${batchIndex + 1}/${totalBatches} failed!`);
+        console.error(`[Batch Embedder] Batch size: ${batch.length}, char lengths: min=${Math.min(...charLengths)}, max=${maxLen}`);
+        console.error(`[Batch Embedder] Longest text (idx ${startIdx + maxIdx}): ${batch[maxIdx]?.substring(0, 200)}...`);
+        throw batchError;
+      }
     }
 
     // Report completion
     config.onProgress?.({
       phase: 'embedding',
-      current: texts.length,
-      total: texts.length,
+      current: cleanedTexts.length,
+      total: cleanedTexts.length,
       message: 'Embedding complete',
     });
 
@@ -166,7 +333,7 @@ export function getDefaultEmbeddingModel(provider: string): string {
 /**
  * Get embedding dimension for a model
  */
-export function getEmbeddingDimension(provider: string, model: string): number {
+export function getEmbeddingDimension(_provider: string, model: string): number {
   // Common dimensions by model
   const dimensions: Record<string, number> = {
     'text-embedding-3-small': 1536,

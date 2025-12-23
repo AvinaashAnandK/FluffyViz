@@ -33,6 +33,7 @@ import {
   updateCellValue as updateCellInDuckDB,
   queryFileDataWithMetadata,
   getAllColumnMetadata,
+  getAllFileRows,
   saveColumnMetadata,
   saveCellMetadata,
   batchSaveCellMetadata,
@@ -558,7 +559,8 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
           name: fieldColumnName,
           type: 'string', // Will contain formatted values
           model: jsonColumn.model,
-          provider: jsonColumn.provider
+          provider: jsonColumn.provider,
+          visible: true,
         }
 
         fieldColumns.push(fieldColumn)
@@ -610,14 +612,9 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
       // Update in-memory columns state
       setColumns(prev => [...prev, ...fieldColumns])
 
-      // Reload data to reflect new columns
-      await loadFileData(fileId, {
-        offset: currentPage * rowsPerPage,
-        limit: rowsPerPage,
-        filters: currentFilters,
-        sortBy: currentSort?.columnId,
-        sortOrder: currentSort?.order
-      })
+      // Trigger data refresh by forcing page update (useEffect will re-fetch)
+      // Note: The column updates are already in DuckDB, so next query will include them
+      setCurrentPage(prev => prev)
 
       // If expansionMode is 'expanded' (not 'both'), remove the JSON column
       if (expansionMode === 'expanded') {
@@ -667,25 +664,35 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
             columnIdToNameMap.set(col.id, col.name)
           })
 
-          // Generate conversational history synchronously
-          const histories = generateConversationalHistory(data, convConfig, columnIdToNameMap)
+          // IMPORTANT: Fetch ALL rows from DuckDB, not just paginated data
+          // This ensures conversational history is generated for the entire dataset
+          console.log(`[SpreadsheetEditor] Fetching all rows for conversational history generation`)
+          const allRows = await getAllFileRows(fileId)
+          console.log(`[SpreadsheetEditor] Fetched ${allRows.length} rows for conversational history`)
 
-          // Update all cells at once (in-memory)
+          // Generate conversational history for ALL rows
+          const histories = generateConversationalHistory(allRows, convConfig, columnIdToNameMap)
+
+          // Update in-memory state for visible rows only
           setData(prev => {
-            return prev.map((row, rowIndex) => ({
-              ...row,
-              [column.id]: histories[rowIndex]
-            }))
+            return prev.map((row) => {
+              // Find the corresponding history using row_index
+              const rowIndex = row.row_index ?? 0
+              return {
+                ...row,
+                [column.id]: histories[rowIndex] ?? ''
+              }
+            })
           })
 
-          // Persist to DuckDB - use the histories array directly
+          // Persist ALL rows to DuckDB
           try {
             const updates = histories.map((historyText, index) => ({
-              rowIndex: data[index]?.row_index ?? index,
+              rowIndex: Number(allRows[index]?.row_index ?? index),
               value: historyText
             }))
             await batchUpdateColumn(fileId, column.id, updates)
-            console.log(`[SpreadsheetEditor] Conversational history persisted to DuckDB for column ${column.id}`)
+            console.log(`[SpreadsheetEditor] Conversational history persisted to DuckDB for column ${column.id} (${updates.length} rows)`)
 
             // Persist database after batch update
             await persistDatabase()
@@ -696,7 +703,7 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
 
           // Clear all loading cells
           setLoadingCells(new Set())
-          setGenerationProgress({ current: data.length, total: data.length })
+          setGenerationProgress({ current: allRows.length, total: allRows.length })
 
           return
         }
@@ -711,9 +718,21 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
       // Track sources values for companion column
       const sourcesValues: Array<{ rowIndex: number; value: string }> = []
 
-      // Generate data for all rows with cell-level updates
+      // IMPORTANT: Fetch ALL rows from DuckDB, not just paginated data
+      // This ensures AI generation runs on the entire dataset
+      console.log(`[SpreadsheetEditor] Fetching all rows for AI column generation`)
+      const allRows = await getAllFileRows(fileId)
+      console.log(`[SpreadsheetEditor] Fetched ${allRows.length} rows for AI column generation`)
+
+      // Create a map of row_index to data array index for visible rows
+      const visibleRowMap = new Map<number, number>()
+      data.forEach((row, idx) => {
+        visibleRowMap.set(row.row_index ?? idx, idx)
+      })
+
+      // Generate data for ALL rows with cell-level updates
       await generateColumnData(
-        data,
+        allRows,
         column.id,
         columnData.prompt,
         columnData.model,
@@ -723,7 +742,7 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
         (rowIndex, result) => {
           // Update cell as soon as it completes
           const cellValue = String(result.content || result.error || '[Error]')
-          const dbRowIndex = data[rowIndex]?.row_index ?? rowIndex
+          const dbRowIndex = Number(allRows[rowIndex]?.row_index ?? rowIndex)
 
           // Track for DuckDB batch update
           generatedValues.push({ rowIndex: dbRowIndex, value: cellValue })
@@ -763,30 +782,33 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
             console.error('[SpreadsheetEditor] Failed to save cell metadata:', err)
           )
 
-          // Update in-memory state with metadata and sources
-          setData(prev => {
-            const updated = [...prev]
-            updated[rowIndex] = {
-              ...updated[rowIndex],
-              [column.id]: cellValue,
-              [sourcesColumnId]: sourcesValue,
-              [`${column.id}__meta`]: {
-                status: cellMeta.status,
-                error: cellMeta.error,
-                errorType: cellMeta.errorType,
-                edited: false,
-                sources: cellMeta.sources
+          // Update in-memory state only for visible rows (current page)
+          const visibleIdx = visibleRowMap.get(dbRowIndex)
+          if (visibleIdx !== undefined) {
+            setData(prev => {
+              const updated = [...prev]
+              updated[visibleIdx] = {
+                ...updated[visibleIdx],
+                [column.id]: cellValue,
+                [sourcesColumnId]: sourcesValue,
+                [`${column.id}__meta`]: {
+                  status: cellMeta.status,
+                  error: cellMeta.error,
+                  errorType: cellMeta.errorType,
+                  edited: false,
+                  sources: cellMeta.sources
+                }
               }
-            }
-            return updated
-          })
+              return updated
+            })
 
-          // Remove from loading set
-          setLoadingCells(prev => {
-            const next = new Set(prev)
-            next.delete(`${rowIndex}-${column.id}`)
-            return next
-          })
+            // Remove from loading set
+            setLoadingCells(prev => {
+              const next = new Set(prev)
+              next.delete(`${visibleIdx}-${column.id}`)
+              return next
+            })
+          }
         },
         columnData.outputSchema,
         columnData.webSearch
@@ -1106,6 +1128,12 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
     const columnId = column.id
 
     try {
+      // IMPORTANT: Fetch ALL rows from DuckDB, not just paginated data
+      // This ensures retry works on the entire dataset
+      console.log(`[SpreadsheetEditor] Fetching all rows for retry operation`)
+      const allRows = await getAllFileRows(fileId)
+      console.log(`[SpreadsheetEditor] Fetched ${allRows.length} rows for retry`)
+
       // Get all cell metadata for this column
       const allCellMeta = await getColumnCellMetadata(fileId, columnId)
 
@@ -1121,19 +1149,25 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
           .filter(m => m.status === 'failed' || m.edited)
           .map(m => m.rowIndex)
       } else {
-        // 'all' - regenerate entire column
-        targetRowIndices = data.map((_, idx) => data[idx]?.row_index ?? idx)
+        // 'all' - regenerate entire column using ALL rows from DuckDB
+        targetRowIndices = allRows.map((row) => Number(row.row_index ?? 0))
       }
 
-      // Get rows to regenerate
-      const targetRows = data.filter((row, idx) =>
-        targetRowIndices.includes(row.row_index ?? idx)
+      // Get rows to regenerate from ALL rows (not just paginated data)
+      const targetRows = allRows.filter((row) =>
+        targetRowIndices.includes(Number(row.row_index ?? 0))
       )
 
       if (targetRows.length === 0) {
         toast.info('No cells to regenerate')
         return
       }
+
+      // Create a map of row_index to visible data array index
+      const visibleRowMap = new Map<number, number>()
+      data.forEach((row, idx) => {
+        visibleRowMap.set(row.row_index ?? idx, idx)
+      })
 
       // Build few-shot prompt if enabled
       let promptWithExamples = column.prompt || ''
@@ -1144,11 +1178,14 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
         promptWithExamples = fewShotPrefix + '\n\n' + promptWithExamples
       }
 
+      // Calculate how many target rows are visible on current page
+      const visibleTargetCount = targetRowIndices.filter(idx => visibleRowMap.has(idx)).length
+      const hiddenCount = targetRows.length - visibleTargetCount
+
       // Show toast notification
-      const hiddenCount = totalRows > data.length ? targetRowIndices.length - targetRows.length : 0
       if (hiddenCount > 0) {
         toast.info(
-          `Regenerating ${targetRowIndices.length} cells (${hiddenCount} hidden by filters)`
+          `Regenerating ${targetRows.length} cells (${hiddenCount} not visible on current page)`
         )
       } else {
         toast.info(`Regenerating ${targetRows.length} cells...`)
@@ -1164,7 +1201,7 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
       }))
       await batchSaveCellMetadata(pendingMeta)
 
-      // Update in-memory state to show pending
+      // Update in-memory state to show pending for visible rows only
       setData(prev => prev.map(row => {
         if (!targetRowIndices.includes(row.row_index ?? 0)) return row
         return {
@@ -1173,17 +1210,22 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
         }
       }))
 
-      // Set loading cells
+      // Set loading cells for visible rows only
       const loadingSet = new Set<string>()
-      targetRows.forEach((_, idx) => loadingSet.add(`${idx}-${columnId}`))
+      targetRowIndices.forEach(rowIdx => {
+        const visibleIdx = visibleRowMap.get(rowIdx)
+        if (visibleIdx !== undefined) {
+          loadingSet.add(`${visibleIdx}-${columnId}`)
+        }
+      })
       setLoadingCells(loadingSet)
 
       // Generate data with callback for each cell
       const columnRefs = extractColumnReferences(promptWithExamples)
 
       // Ensure we have model and provider - prioritize options, then column
-      let modelToUse: Model | undefined = options.model || column.model
-      let providerToUse: ModelProvider | undefined = options.provider || column.provider
+      const modelToUse: Model | undefined = options.model || column.model
+      const providerToUse: ModelProvider | undefined = options.provider || column.provider
 
       // If still undefined, show error
       if (!modelToUse || !providerToUse) {
@@ -1224,7 +1266,7 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
         (current, total) => setGenerationProgress({ current, total }),
         (rowIndex, result) => {
           const cellValue = String(result.content || result.error || '[Error]')
-          const dbRowIndex = targetRows[rowIndex]?.row_index ?? rowIndex
+          const dbRowIndex = Number(targetRows[rowIndex]?.row_index ?? rowIndex)
 
           // Save cell metadata
           saveCellMetadata({
@@ -1238,13 +1280,13 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
             lastEditTime: Date.now()
           }).catch(err => console.error('Failed to save cell metadata:', err))
 
-          // Update in-memory state
-          setData(prev => {
-            const updated = [...prev]
-            const dataIdx = prev.findIndex(r => r.row_index === dbRowIndex)
-            if (dataIdx >= 0) {
-              updated[dataIdx] = {
-                ...updated[dataIdx],
+          // Update in-memory state only for visible rows
+          const visibleIdx = visibleRowMap.get(dbRowIndex)
+          if (visibleIdx !== undefined) {
+            setData(prev => {
+              const updated = [...prev]
+              updated[visibleIdx] = {
+                ...updated[visibleIdx],
                 [columnId]: cellValue,
                 [`${columnId}__meta`]: {
                   status: result.error ? 'failed' as const : 'success' as const,
@@ -1253,21 +1295,21 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
                   edited: false
                 }
               }
-            }
-            return updated
-          })
+              return updated
+            })
+
+            // Remove from loading set
+            setLoadingCells(prev => {
+              const next = new Set(prev)
+              next.delete(`${visibleIdx}-${columnId}`)
+              return next
+            })
+          }
 
           // Update cell value in DuckDB
           updateCellInDuckDB(fileId, dbRowIndex, columnId, cellValue).catch(err =>
             console.error('Failed to update cell:', err)
           )
-
-          // Remove from loading set
-          setLoadingCells(prev => {
-            const next = new Set(prev)
-            next.delete(`${rowIndex}-${columnId}`)
-            return next
-          })
         },
         column.outputSchema
       )
@@ -1376,7 +1418,7 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
               <div className="flex items-center gap-2">
                 <h1 className="text-xl font-bold">{fileName}</h1>
                 <Badge variant="secondary" className="text-xs">
-                  {data.length} rows × {columns.length} columns
+                  {totalRows} rows × {columns.length} columns
                 </Badge>
                 {activeSavedFilter && (
                   <Badge variant="outline" className="text-xs bg-primary/10">
@@ -1519,7 +1561,7 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
                                 <div className="flex items-center justify-between w-full">
                                   <span>{filter.name}</span>
                                   <span className="text-xs text-muted-foreground ml-2">
-                                    ({filter.pointCount} rows)
+                                    ({filter.rowCount} rows)
                                   </span>
                                 </div>
                               </SelectItem>
@@ -1813,14 +1855,14 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
                 <AgentTraceViewer
                   fileId={fileId}
                   data={{
-                    columns: columns.map(col => col.name),
+                    columns: columns.map(col => ({ id: col.id, name: col.name })),
                     rows: data
                   }}
                   onDataUpdate={(updatedData) => {
-                    const columnNames = updatedData.columns;
-                    const newColumns: Column[] = columnNames.map(name => ({
-                      id: name,
-                      name,
+                    // Handle ColumnInfo objects from AgentTraceViewer
+                    const newColumns: Column[] = updatedData.columns.map(colInfo => ({
+                      id: colInfo.id,
+                      name: colInfo.name,
                       type: 'string',
                       visible: true,
                     }));

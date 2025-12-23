@@ -14,6 +14,7 @@ export {
   queryFileData,
   queryFileDataWithMetadata,
   getFileRowCount,
+  getAllFileRows,
   updateCellValue,
   addColumn,
   removeColumn,

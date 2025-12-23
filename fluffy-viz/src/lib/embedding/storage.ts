@@ -5,6 +5,7 @@
 
 import { getConnection, executeQuery } from '@/lib/duckdb/client';
 import type { ActiveEmbeddingLayer, EmbeddingLayerMetadata, EmbeddingPoint } from '@/types/embedding';
+import { deleteClusteringCoordinates } from './clustering-coords-storage';
 
 /**
  * Helper function to format values for SQL
@@ -48,10 +49,13 @@ export class EmbeddingStorage {
 
       // 1. Insert or replace layer metadata
       const compositionConfigJson = formatValue(JSON.stringify(layer.compositionConfig));
+      const clusterConfigJson = layer.clusterConfig ? formatValue(JSON.stringify(layer.clusterConfig)) : 'NULL';
+      const clusterStatsJson = layer.clusterStats ? formatValue(JSON.stringify(layer.clusterStats)) : 'NULL';
       await conn.query(`
         INSERT OR REPLACE INTO embedding_layers (
           id, file_id, name, provider, model, dimension,
           composition_mode, composition_config,
+          cluster_config, cluster_stats,
           created_at, last_accessed_at, is_active
         ) VALUES (
           ${formatValue(layer.id)},
@@ -62,6 +66,8 @@ export class EmbeddingStorage {
           ${layer.dimension},
           ${formatValue(layer.compositionMode)},
           ${compositionConfigJson},
+          ${clusterConfigJson},
+          ${clusterStatsJson},
           ${formatValue(layer.createdAt)},
           ${formatValue(layer.lastAccessedAt)},
           TRUE
@@ -85,14 +91,16 @@ export class EmbeddingStorage {
           const sourceRowIndices = formatValue(p.sourceRowIndices);
           const composedText = formatValue(p.composedText);
           const label = p.label ? formatValue(p.label) : 'NULL';
+          const neighbors = p.neighbors ? formatValue(JSON.stringify(p.neighbors)) : 'NULL';
+          const clusterId = p.clusterId ?? -1;
 
-          return `(${formatValue(layer.id)}, ${formatValue(p.id)}, ${embedding}, ${coordinates2d}, ${composedText}, ${label}, ${sourceRowIndices})`;
+          return `(${formatValue(layer.id)}, ${formatValue(p.id)}, ${embedding}, ${coordinates2d}, ${composedText}, ${label}, ${sourceRowIndices}, ${neighbors}, ${clusterId})`;
         }).join(',\n');
 
         await conn.query(`
           INSERT INTO embedding_points (
             layer_id, point_id, embedding, coordinates_2d,
-            composed_text, label, source_row_indices
+            composed_text, label, source_row_indices, neighbors, cluster_id
           ) VALUES ${values}
         `);
 
@@ -163,13 +171,16 @@ export class EmbeddingStorage {
         dimension: layerMeta.dimension,
         compositionMode: layerMeta.composition_mode,
         compositionConfig: JSON.parse(layerMeta.composition_config),
+        clusterConfig: layerMeta.cluster_config ? JSON.parse(layerMeta.cluster_config) : undefined,
+        clusterStats: layerMeta.cluster_stats ? JSON.parse(layerMeta.cluster_stats) : undefined,
         points: points.map(p => ({
           id: p.point_id,
           embedding: p.embedding,
           coordinates2D: p.coordinates_2d,
           composedText: p.composed_text,
           label: p.label,
-          sourceRowIndices: p.source_row_indices
+          sourceRowIndices: p.source_row_indices,
+          clusterId: p.cluster_id ?? -1,
         } as EmbeddingPoint)),
         createdAt: layerMeta.created_at,
         lastAccessedAt: layerMeta.last_accessed_at
@@ -246,7 +257,7 @@ export class EmbeddingStorage {
 
   /**
    * Delete embedding layer and all its points
-   * Cascades to delete all associated points
+   * Cascades to delete all associated points and OPFS clustering coordinates
    */
   async deleteLayer(layerId: string): Promise<void> {
     console.log(`[Embedding Storage] Deleting layer ${layerId}`);
@@ -267,6 +278,14 @@ export class EmbeddingStorage {
       `);
 
       await conn.query('COMMIT');
+
+      // Delete clustering coordinates from OPFS (outside transaction, non-critical)
+      try {
+        await deleteClusteringCoordinates(layerId);
+      } catch (opfsError) {
+        console.warn('[Embedding Storage] Failed to delete OPFS clustering coords:', opfsError);
+      }
+
       console.log('[Embedding Storage] ✓ Layer deleted');
 
     } catch (error) {
@@ -291,7 +310,7 @@ export function generateEmbeddingId(): string {
  * Reserved column names that conflict with embedding layer table columns.
  * These will be prefixed with "original_" if they exist in file_data.
  */
-const RESERVED_COLUMNS = ['point_id', 'x', 'y', 'composed_text', 'layer_id'];
+const RESERVED_COLUMNS = ['point_id', 'x', 'y', 'composed_text', 'layer_id', 'cluster'];
 
 /**
  * Create an embedding layer table that JOINs embedding points with file data.
@@ -309,6 +328,19 @@ export async function createLayerTable(layerId: string, fileId: string): Promise
   console.log(`[Embedding Storage] Creating layer table ${tableName} for file ${fileId}`);
 
   try {
+    // Check if table already exists (handles React Strict Mode double-render race condition)
+    const existingTable = await executeQuery<{ table_name: string }>(`
+      SELECT table_name
+      FROM information_schema.tables
+      WHERE table_name = '${tableName}'
+      LIMIT 1
+    `);
+
+    if (existingTable.length > 0) {
+      console.log(`[Embedding Storage] Layer table ${tableName} already exists, reusing`);
+      return tableName;
+    }
+
     // Get columns from file_data table
     const fileColumnsResult = await executeQuery<{ column_name: string; data_type: string }>(`
       SELECT column_name, data_type
@@ -321,23 +353,55 @@ export async function createLayerTable(layerId: string, fileId: string): Promise
       throw new Error(`File data table ${fileTableName} not found`);
     }
 
-    // Build safe column list, handling collisions with reserved names
+    // Get column metadata to resolve column IDs to human-readable names
+    const columnMetadataResult = await executeQuery<{ column_id: string; column_name: string | null }>(`
+      SELECT column_id, column_name
+      FROM column_metadata
+      WHERE file_id = '${fileId}'
+    `);
+
+    // Build a map of column_id -> column_name
+    const columnNameMap = new Map<string, string>();
+    for (const meta of columnMetadataResult) {
+      if (meta.column_name) {
+        columnNameMap.set(meta.column_id, meta.column_name);
+      }
+    }
+
+    // Build safe column list, resolving IDs to names and handling collisions
     const safeFileDataColumns = fileColumnsResult
       .map(col => {
-        const colName = col.column_name;
-        if (RESERVED_COLUMNS.includes(colName.toLowerCase())) {
-          return `fd."${colName}" AS "original_${colName}"`;
+        const colId = col.column_name;
+
+        // Skip row_index - we'll reference it but not alias it differently
+        if (colId === 'row_index') {
+          return `fd."row_index"`;
         }
-        return `fd."${colName}"`;
+
+        // Check if this column has a human-readable name in metadata
+        const humanName = columnNameMap.get(colId);
+
+        // Determine the display name (prefer human name, fallback to ID)
+        const displayName = humanName || colId;
+
+        // Handle collisions with reserved embedding columns
+        if (RESERVED_COLUMNS.includes(displayName.toLowerCase())) {
+          return `fd."${colId}" AS "original_${displayName}"`;
+        }
+
+        // If we have a human-readable name different from column ID, use alias
+        if (humanName && humanName !== colId) {
+          return `fd."${colId}" AS "${humanName}"`;
+        }
+
+        return `fd."${colId}"`;
       })
       .join(',\n    ');
 
-    // Drop existing table if it exists (stale from previous session)
-    await executeQuery(`DROP TABLE IF EXISTS "${tableName}"`);
-
-    // Create layer table with JOIN
+    // Create layer table with JOIN using CREATE TABLE IF NOT EXISTS pattern
     // Note: We join on source_row_indices[1] because for 1:1 modes (single/multi),
     // there's exactly one source row per embedding point
+    // Note: cluster_id is cast to VARCHAR and labeled for categorical coloring in embedding-atlas
     const createSQL = `
       CREATE TABLE "${tableName}" AS
       SELECT
@@ -345,6 +409,11 @@ export async function createLayerTable(layerId: string, fileId: string): Promise
         ep.coordinates_2d[1] AS x,
         ep.coordinates_2d[2] AS y,
         ep.composed_text,
+        ep.neighbors,
+        CASE
+          WHEN ep.cluster_id = -1 THEN 'Noise'
+          ELSE 'Cluster ' || CAST(ep.cluster_id AS VARCHAR)
+        END AS cluster,
         ${safeFileDataColumns}
       FROM embedding_points ep
       JOIN "${fileTableName}" fd
@@ -367,6 +436,20 @@ export async function createLayerTable(layerId: string, fileId: string): Promise
     return tableName;
 
   } catch (error) {
+    // Handle race condition: multiple concurrent calls may try to create the same table
+    // This happens in React Strict Mode (dev) or during rapid re-renders
+    // DuckDB error format: "Catalog Error: Table with name "..." already exists!"
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const isAlreadyExistsError =
+      errorMessage.includes('already exists') &&
+      errorMessage.includes('Catalog Error');
+
+    if (isAlreadyExistsError) {
+      console.log(`[Embedding Storage] Layer table ${tableName} created by concurrent call, reusing`);
+      return tableName;
+    }
+
+    // Re-throw genuine errors
     console.error('[Embedding Storage] Error creating layer table:', error);
     throw error;
   }
@@ -415,5 +498,67 @@ export async function getLayerTableColumns(layerId: string): Promise<string[]> {
   } catch (error) {
     console.error('[Embedding Storage] Error getting layer table columns:', error);
     return [];
+  }
+}
+
+/**
+ * Update cluster assignments for a layer.
+ * Used when re-clustering with different parameters.
+ */
+export async function updateClusterAssignments(
+  layerId: string,
+  clusterLabels: number[],
+  pointIds: string[]
+): Promise<void> {
+  console.log(`[Embedding Storage] Updating cluster assignments for layer ${layerId}`);
+
+  const conn = await getConnection();
+
+  try {
+    await conn.query('BEGIN TRANSACTION');
+
+    // Update cluster_id for each point
+    for (let i = 0; i < pointIds.length; i++) {
+      await conn.query(`
+        UPDATE embedding_points
+        SET cluster_id = ${clusterLabels[i]}
+        WHERE layer_id = ${formatValue(layerId)} AND point_id = ${formatValue(pointIds[i])}
+      `);
+    }
+
+    await conn.query('COMMIT');
+    console.log(`[Embedding Storage] ✓ Updated cluster assignments for ${pointIds.length} points`);
+
+  } catch (error) {
+    await conn.query('ROLLBACK');
+    console.error('[Embedding Storage] Error updating cluster assignments:', error);
+    throw error;
+  } finally {
+    await conn.close();
+  }
+}
+
+/**
+ * Update cluster config and stats for a layer.
+ */
+export async function updateClusterMetadata(
+  layerId: string,
+  clusterConfig: { minClusterSize: number; minSamples: number },
+  clusterStats: { clusterCount: number; noiseCount: number; noisePercentage: number; clusterSizes: Record<number, number> }
+): Promise<void> {
+  console.log(`[Embedding Storage] Updating cluster metadata for layer ${layerId}`);
+
+  try {
+    await executeQuery(`
+      UPDATE embedding_layers
+      SET cluster_config = ${formatValue(JSON.stringify(clusterConfig))},
+          cluster_stats = ${formatValue(JSON.stringify(clusterStats))}
+      WHERE id = ${formatValue(layerId)}
+    `);
+
+    console.log('[Embedding Storage] ✓ Cluster metadata updated');
+  } catch (error) {
+    console.error('[Embedding Storage] Error updating cluster metadata:', error);
+    throw error;
   }
 }

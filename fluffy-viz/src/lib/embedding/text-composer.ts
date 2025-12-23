@@ -28,8 +28,27 @@ export function composeSingleColumn(
   rows: Record<string, unknown>[],
   config: SingleCompositionConfig
 ): ComposedResult {
+  // Debug: Check if column exists in first row
+  if (rows.length > 0) {
+    const firstRow = rows[0];
+    const availableColumns = Object.keys(firstRow);
+    console.log(`[Text Composer] Single column mode - sourceColumn: "${config.sourceColumn}"`);
+    console.log(`[Text Composer] Available columns in data:`, availableColumns.slice(0, 10), availableColumns.length > 10 ? `... (${availableColumns.length} total)` : '');
+
+    if (!availableColumns.includes(config.sourceColumn)) {
+      console.warn(`[Text Composer] WARNING: Column "${config.sourceColumn}" not found in data!`);
+      console.warn(`[Text Composer] Did you mean one of:`, availableColumns.filter(c => c.toLowerCase().includes(config.sourceColumn.toLowerCase().substring(0, 5))));
+    }
+  }
+
   const composedTexts = rows.map(row => getColumnValue(row, config.sourceColumn));
   const sourceRowIndices = rows.map((_, idx) => [idx]);
+
+  // Debug: Count empty values
+  const emptyCount = composedTexts.filter(t => !t || t.trim().length === 0).length;
+  if (emptyCount > 0) {
+    console.warn(`[Text Composer] WARNING: ${emptyCount}/${composedTexts.length} rows have empty values in column "${config.sourceColumn}"`);
+  }
 
   return { composedTexts, sourceRowIndices };
 }
@@ -39,11 +58,30 @@ export function composeMultiColumn(
   rows: Record<string, unknown>[],
   config: MultiCompositionConfig
 ): ComposedResult {
+  // Debug: Check if columns exist
+  if (rows.length > 0) {
+    const firstRow = rows[0];
+    const availableColumns = Object.keys(firstRow);
+    console.log(`[Text Composer] Multi-column mode - columns: ${config.columns.join(', ')}`);
+
+    const missingColumns = config.columns.filter(c => !availableColumns.includes(c));
+    if (missingColumns.length > 0) {
+      console.warn(`[Text Composer] WARNING: Columns not found in data:`, missingColumns);
+      console.warn(`[Text Composer] Available columns:`, availableColumns.slice(0, 10));
+    }
+  }
+
   const composedTexts = rows.map(row => {
     const parts = config.columns.map(col => getColumnValue(row, col));
     return parts.join(config.separator);
   });
   const sourceRowIndices = rows.map((_, idx) => [idx]);
+
+  // Debug: Count empty values
+  const emptyCount = composedTexts.filter(t => !t || t.trim().length === 0).length;
+  if (emptyCount > 0) {
+    console.warn(`[Text Composer] WARNING: ${emptyCount}/${composedTexts.length} rows have empty composed text`);
+  }
 
   return { composedTexts, sourceRowIndices };
 }
