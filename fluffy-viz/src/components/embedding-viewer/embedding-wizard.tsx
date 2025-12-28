@@ -24,7 +24,8 @@ import { Badge } from '@/components/ui/badge';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Slider } from '@/components/ui/slider';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
-import { AlertCircle, Plus, X, Info, Type, Columns, Layers } from 'lucide-react';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
+import { AlertCircle, Plus, X, Info, Type, Columns, Layers, Settings } from 'lucide-react';
 import type { WizardState, GenerationProgress, ConversationalStrategy } from '@/types/embedding';
 import { DEFAULT_CLUSTER_CONFIG } from '@/types/embedding';
 import { getEmbeddingModelsForProvider, getDefaultEmbeddingModel } from '@/lib/embedding/batch-embedder';
@@ -392,82 +393,92 @@ export function EmbeddingWizard({ open, onClose, columns, rows = [], totalRows, 
               )}
 
               {/* Clustering Settings */}
-              <div className="mt-4 p-4 border rounded-lg space-y-4">
-                <h4 className="font-medium text-sm">Clustering Settings (HDBSCAN)</h4>
+              <div className="mt-4 p-4 border rounded-lg space-y-3">
+                <h4 className="font-medium text-sm">Clustering</h4>
                 <p className="text-xs text-muted-foreground">
-                  Automatically group semantically similar conversations into clusters.
+                  HDBSCAN discovers cluster count (k) on 15D UMAP, then K-Means assigns all points using the best k from silhouette scoring.
                 </p>
 
-                <div className="space-y-4">
-                  <div>
-                    <div className="flex justify-between items-center mb-2">
-                      <Label className="text-xs">UMAP Neighbors</Label>
-                      <span className="text-xs text-muted-foreground font-mono">
-                        {state.clusterConfig.nNeighbors}
+                <Accordion type="single" collapsible className="w-full">
+                  <AccordionItem value="advanced" className="border-none">
+                    <AccordionTrigger className="py-2 text-xs hover:no-underline">
+                      <span className="flex items-center gap-1.5 text-muted-foreground">
+                        <Settings className="h-3 w-3" />
+                        Advanced Settings
                       </span>
-                    </div>
-                    <Slider
-                      value={[state.clusterConfig.nNeighbors]}
-                      onValueChange={([val]) => setState(prev => ({
-                        ...prev,
-                        clusterConfig: { ...prev.clusterConfig, nNeighbors: val }
-                      }))}
-                      min={15}
-                      max={100}
-                      step={5}
-                      className="w-full"
-                    />
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Higher = more global structure, lower noise (15-100)
-                    </p>
-                  </div>
+                    </AccordionTrigger>
+                    <AccordionContent className="pt-2 space-y-4">
+                      <div>
+                        <div className="flex justify-between items-center mb-2">
+                          <Label className="text-xs">UMAP Neighbors</Label>
+                          <span className="text-xs text-muted-foreground font-mono">
+                            {state.clusterConfig.nNeighbors}
+                          </span>
+                        </div>
+                        <Slider
+                          value={[state.clusterConfig.nNeighbors]}
+                          onValueChange={([val]) => setState(prev => ({
+                            ...prev,
+                            clusterConfig: { ...prev.clusterConfig, nNeighbors: val }
+                          }))}
+                          min={15}
+                          max={100}
+                          step={5}
+                          className="w-full"
+                        />
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Higher = more global structure, lower noise (15-100)
+                        </p>
+                      </div>
 
-                  <div>
-                    <div className="flex justify-between items-center mb-2">
-                      <Label className="text-xs">Min Cluster Size</Label>
-                      <span className="text-xs text-muted-foreground font-mono">
-                        {state.clusterConfig.minClusterSize}
-                      </span>
-                    </div>
-                    <Slider
-                      value={[state.clusterConfig.minClusterSize]}
-                      onValueChange={([val]) => setState(prev => ({
-                        ...prev,
-                        clusterConfig: { ...prev.clusterConfig, minClusterSize: val }
-                      }))}
-                      min={5}
-                      max={50}
-                      step={1}
-                      className="w-full"
-                    />
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Minimum conversations needed to form a cluster (5-50)
-                    </p>
-                  </div>
+                      <div>
+                        <div className="flex justify-between items-center mb-2">
+                          <Label className="text-xs">Min Cluster Size (HDBSCAN)</Label>
+                          <span className="text-xs text-muted-foreground font-mono">
+                            {state.clusterConfig.minClusterSize}
+                          </span>
+                        </div>
+                        <Slider
+                          value={[state.clusterConfig.minClusterSize]}
+                          onValueChange={([val]) => setState(prev => ({
+                            ...prev,
+                            clusterConfig: { ...prev.clusterConfig, minClusterSize: val }
+                          }))}
+                          min={5}
+                          max={50}
+                          step={1}
+                          className="w-full"
+                        />
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Minimum points needed to form a cluster (5-50)
+                        </p>
+                      </div>
 
-                  <div>
-                    <div className="flex justify-between items-center mb-2">
-                      <Label className="text-xs">Min Samples</Label>
-                      <span className="text-xs text-muted-foreground font-mono">
-                        {state.clusterConfig.minSamples}
-                      </span>
-                    </div>
-                    <Slider
-                      value={[state.clusterConfig.minSamples]}
-                      onValueChange={([val]) => setState(prev => ({
-                        ...prev,
-                        clusterConfig: { ...prev.clusterConfig, minSamples: val }
-                      }))}
-                      min={1}
-                      max={15}
-                      step={1}
-                      className="w-full"
-                    />
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Core point threshold - lower values create more clusters (1-15)
-                    </p>
-                  </div>
-                </div>
+                      <div>
+                        <div className="flex justify-between items-center mb-2">
+                          <Label className="text-xs">Min Samples (HDBSCAN)</Label>
+                          <span className="text-xs text-muted-foreground font-mono">
+                            {state.clusterConfig.minSamples}
+                          </span>
+                        </div>
+                        <Slider
+                          value={[state.clusterConfig.minSamples]}
+                          onValueChange={([val]) => setState(prev => ({
+                            ...prev,
+                            clusterConfig: { ...prev.clusterConfig, minSamples: val }
+                          }))}
+                          min={1}
+                          max={15}
+                          step={1}
+                          className="w-full"
+                        />
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Core point threshold - lower values create more clusters (1-15)
+                        </p>
+                      </div>
+                    </AccordionContent>
+                  </AccordionItem>
+                </Accordion>
               </div>
 
               {/* Preview Count */}

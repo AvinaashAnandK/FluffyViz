@@ -16,9 +16,10 @@ import type { ActiveEmbeddingLayer, EmbeddingPoint, ClusterConfig, ClusterStats 
 import { DEFAULT_CLUSTER_CONFIG } from '@/types/embedding';
 import { createLayerTable, getLayerTableColumns, dropLayerTable, updateClusterAssignments, updateClusterMetadata } from '@/lib/embedding/storage';
 import { createFluffySearcher, getSearchableColumns, type Searcher } from '@/lib/embedding/search';
-import { clusterEmbeddings } from '@/lib/embedding/clustering';
+import { hybridCluster, clusterEmbeddings } from '@/lib/embedding/clustering';
 import { loadClusteringCoordinates } from '@/lib/embedding/clustering-coords-storage';
-import { Loader2, Circle, Waves, Minus, Plus, Tags, RefreshCw, CheckCircle, BarChart3 } from 'lucide-react';
+import '@/lib/embedding/cluster-similarity'; // Browser console tools
+import { Loader2, Circle, Waves, Minus, Plus, Tags, RefreshCw, CheckCircle, BarChart3, Settings } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Slider } from '@/components/ui/slider';
@@ -28,6 +29,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Switch } from '@/components/ui/switch';
 
@@ -102,7 +104,7 @@ export function EmbeddingVisualization({
   const [autoLabelEnabled, setAutoLabelEnabled] = useState<boolean>(true);
   const [autoLabelDensityThreshold, setAutoLabelDensityThreshold] = useState<number>(0.1);
 
-  // HDBSCAN clustering state
+  // Hybrid clustering state (HDBSCAN for k-discovery, K-Means for assignment)
   const [clusterConfig, setClusterConfig] = useState<ClusterConfig>(
     layer.clusterConfig ?? { ...DEFAULT_CLUSTER_CONFIG }
   );
@@ -211,16 +213,19 @@ export function EmbeddingVisualization({
       const pointIds = layer.points.map(p => p.id);
 
       // Try to load 15D clustering coordinates from OPFS
-      // These preserve more semantic information than 2D
       const clusteringCoords = await loadClusteringCoordinates(layer.id);
+
+      // Get original embeddings from points
+      const originalEmbeddings = layer.points.map(p => p.embedding);
 
       let result;
       if (clusteringCoords && clusteringCoords.length === layer.points.length) {
-        console.log('[Embedding Visualization] Using 15D coordinates from OPFS');
-        result = await clusterEmbeddings(clusteringCoords, clusterConfig);
+        // Use hybrid approach: HDBSCAN on 15D for k-discovery, K-Means on embeddings
+        console.log('[Embedding Visualization] Using hybrid clustering (HDBSCAN → K-Means)');
+        result = await hybridCluster(clusteringCoords, originalEmbeddings, clusterConfig);
       } else {
-        // Fall back to 2D coordinates if OPFS data not available
-        console.log('[Embedding Visualization] Falling back to 2D coordinates');
+        // Fall back to HDBSCAN-only on 2D coordinates if OPFS data not available
+        console.log('[Embedding Visualization] Falling back to HDBSCAN on 2D coordinates');
         const coordinates2D = layer.points.map(p => p.coordinates2D);
         result = await clusterEmbeddings(coordinates2D, clusterConfig);
       }
@@ -229,10 +234,12 @@ export function EmbeddingVisualization({
       await updateClusterAssignments(layer.id, result.labels, pointIds);
 
       // Update cluster metadata in DuckDB
+      // Hybrid result has no noise (K-Means assigns all points)
+      const isHybrid = 'method' in result && result.method === 'hybrid';
       const newStats: ClusterStats = {
         clusterCount: result.clusterCount,
-        noiseCount: result.noiseCount,
-        noisePercentage: result.noisePercentage,
+        noiseCount: isHybrid ? 0 : (result as any).noiseCount || 0,
+        noisePercentage: isHybrid ? 0 : (result as any).noisePercentage || 0,
         clusterSizes: Object.fromEntries(result.clusterSizes),
       };
       await updateClusterMetadata(layer.id, clusterConfig, newStats);
@@ -612,10 +619,15 @@ export function EmbeddingVisualization({
           </PopoverTrigger>
           <PopoverContent className="w-80" align="start">
             <div className="space-y-4">
+              {/* Approach Description */}
+              <p className="text-xs text-muted-foreground">
+                HDBSCAN discovers k on 15D UMAP, K-Means assigns all points via silhouette-optimized k.
+              </p>
+
               {/* Cluster Stats */}
               {clusterStats ? (
                 <div className="space-y-2">
-                  <Label className="text-xs font-medium">Cluster Statistics</Label>
+                  <Label className="text-xs font-medium">Statistics</Label>
                   <div className="grid grid-cols-2 gap-2 text-xs">
                     <div className="flex justify-between p-2 bg-muted rounded">
                       <span className="text-muted-foreground">Clusters</span>
@@ -643,59 +655,72 @@ export function EmbeddingVisualization({
                 </div>
               )}
 
-              {/* UMAP Neighbors Slider */}
-              <div className="space-y-2">
-                <div className="flex justify-between">
-                  <Label className="text-xs font-medium">UMAP Neighbors</Label>
-                  <span className="text-xs text-muted-foreground">{clusterConfig.nNeighbors}</span>
-                </div>
-                <Slider
-                  value={[clusterConfig.nNeighbors]}
-                  onValueChange={([val]) => setClusterConfig(prev => ({ ...prev, nNeighbors: val }))}
-                  min={15}
-                  max={100}
-                  step={5}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Higher = more global structure, lower noise
-                </p>
-              </div>
+              {/* Advanced Settings Accordion */}
+              <Accordion type="single" collapsible className="w-full">
+                <AccordionItem value="advanced" className="border rounded-md px-3">
+                  <AccordionTrigger className="py-2 text-xs hover:no-underline">
+                    <span className="flex items-center gap-1.5 text-muted-foreground">
+                      <Settings className="h-3 w-3" />
+                      Advanced Settings
+                    </span>
+                  </AccordionTrigger>
+                  <AccordionContent className="pt-2 pb-3 space-y-4">
+                    {/* UMAP Neighbors Slider */}
+                    <div className="space-y-2">
+                      <div className="flex justify-between">
+                        <Label className="text-xs font-medium">UMAP Neighbors</Label>
+                        <span className="text-xs text-muted-foreground">{clusterConfig.nNeighbors}</span>
+                      </div>
+                      <Slider
+                        value={[clusterConfig.nNeighbors]}
+                        onValueChange={([val]) => setClusterConfig(prev => ({ ...prev, nNeighbors: val }))}
+                        min={15}
+                        max={100}
+                        step={5}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Higher = more global structure
+                      </p>
+                    </div>
 
-              {/* Min Cluster Size Slider */}
-              <div className="space-y-2">
-                <div className="flex justify-between">
-                  <Label className="text-xs font-medium">Min Cluster Size</Label>
-                  <span className="text-xs text-muted-foreground">{clusterConfig.minClusterSize}</span>
-                </div>
-                <Slider
-                  value={[clusterConfig.minClusterSize]}
-                  onValueChange={([val]) => setClusterConfig(prev => ({ ...prev, minClusterSize: val }))}
-                  min={5}
-                  max={50}
-                  step={1}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Minimum points needed to form a cluster
-                </p>
-              </div>
+                    {/* Min Cluster Size Slider */}
+                    <div className="space-y-2">
+                      <div className="flex justify-between">
+                        <Label className="text-xs font-medium">Min Cluster Size</Label>
+                        <span className="text-xs text-muted-foreground">{clusterConfig.minClusterSize}</span>
+                      </div>
+                      <Slider
+                        value={[clusterConfig.minClusterSize]}
+                        onValueChange={([val]) => setClusterConfig(prev => ({ ...prev, minClusterSize: val }))}
+                        min={5}
+                        max={50}
+                        step={1}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Min points to form a cluster
+                      </p>
+                    </div>
 
-              {/* Min Samples Slider */}
-              <div className="space-y-2">
-                <div className="flex justify-between">
-                  <Label className="text-xs font-medium">Min Samples</Label>
-                  <span className="text-xs text-muted-foreground">{clusterConfig.minSamples}</span>
-                </div>
-                <Slider
-                  value={[clusterConfig.minSamples]}
-                  onValueChange={([val]) => setClusterConfig(prev => ({ ...prev, minSamples: val }))}
-                  min={1}
-                  max={15}
-                  step={1}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Lower = fewer outliers, more cluster members
-                </p>
-              </div>
+                    {/* Min Samples Slider */}
+                    <div className="space-y-2">
+                      <div className="flex justify-between">
+                        <Label className="text-xs font-medium">Min Samples</Label>
+                        <span className="text-xs text-muted-foreground">{clusterConfig.minSamples}</span>
+                      </div>
+                      <Slider
+                        value={[clusterConfig.minSamples]}
+                        onValueChange={([val]) => setClusterConfig(prev => ({ ...prev, minSamples: val }))}
+                        min={1}
+                        max={15}
+                        step={1}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Core point threshold for HDBSCAN
+                      </p>
+                    </div>
+                  </AccordionContent>
+                </AccordionItem>
+              </Accordion>
 
               {/* Re-cluster Button */}
               <Button
@@ -712,7 +737,7 @@ export function EmbeddingVisualization({
                 ) : (
                   <>
                     <RefreshCw className="h-3 w-3 mr-2" />
-                    Re-cluster with New Parameters
+                    Re-cluster
                   </>
                 )}
               </Button>

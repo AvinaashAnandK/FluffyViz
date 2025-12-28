@@ -31,7 +31,7 @@ FluffyViz is a client-side web application built with Next.js 15 (App Router), R
 │  │                        AI Integration                                │    │
 │  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐  │    │
 │  │  │  Vercel AI SDK   │  │   Web Search     │  │    Embedding     │  │    │
-│  │  │  (10+ providers) │  │   + Sources      │  │  UMAP Pipeline   │  │    │
+│  │  │  (10+ providers) │  │   + Sources      │  │  UMAP + Cluster  │  │    │
 │  │  └──────────────────┘  └──────────────────┘  └──────────────────┘  │    │
 │  └─────────────────────────────────────────────────────────────────────┘    │
 │                                                                              │
@@ -72,6 +72,9 @@ FluffyViz is a client-side web application built with Next.js 15 (App Router), R
 | @ai-sdk/cohere | Cohere models |
 | @huggingface/inference | HuggingFace API |
 | umap-js | Dimensionality reduction |
+| hdbscan-ts | Density-based clustering |
+| ml-kmeans | K-Means clustering with silhouette |
+| tiktoken | Token counting |
 
 ### UI Components
 | Package | Purpose |
@@ -81,6 +84,7 @@ FluffyViz is a client-side web application built with Next.js 15 (App Router), R
 | lucide-react | Icon library |
 | sonner | Toast notifications |
 | cmdk | Command palette |
+| embedding-atlas | Interactive scatter plot |
 
 ---
 
@@ -113,9 +117,10 @@ fluffy-viz/
 │   │   │   └── RetryModal.tsx        # Retry failed cells
 │   │   │
 │   │   ├── embedding-viewer/         # Visualization components
-│   │   │   ├── embedding-wizard.tsx
-│   │   │   ├── embedding-visualization.tsx
-│   │   │   └── agent-trace-viewer.tsx
+│   │   │   ├── embedding-wizard.tsx  # Multi-step wizard
+│   │   │   ├── embedding-visualization.tsx # Atlas integration
+│   │   │   ├── agent-trace-viewer.tsx # Main container
+│   │   │   └── save-filter-modal.tsx # Filter persistence
 │   │   │
 │   │   ├── ui/                       # shadcn/ui components
 │   │   └── ...                       # Other components
@@ -141,7 +146,13 @@ fluffy-viz/
 │   │   └── embedding/                # Embedding pipeline
 │   │       ├── text-composer.ts      # Composition strategies
 │   │       ├── batch-embedder.ts     # Batch processing
-│   │       ├── umap-reducer.ts       # UMAP projection
+│   │       ├── umap-reducer.ts       # UMAP projection (2-stage)
+│   │       ├── clustering.ts         # Hybrid HDBSCAN + K-Means
+│   │       ├── kmeans.ts             # K-Means with silhouette scoring
+│   │       ├── cluster-similarity.ts # Console tools for cluster analysis
+│   │       ├── clustering-coords-storage.ts # OPFS storage for 15D coords
+│   │       ├── knn.ts                # K-nearest neighbors
+│   │       ├── search.ts             # Searcher interface
 │   │       └── storage.ts            # Layer persistence
 │   │
 │   ├── hooks/
@@ -151,7 +162,7 @@ fluffy-viz/
 │   │   ├── agent-data.ts             # Data format types
 │   │   ├── models.ts                 # AI model types
 │   │   ├── web-search.ts             # Web search config types
-│   │   ├── embedding.ts              # Embedding types
+│   │   ├── embedding.ts              # Embedding & clustering types
 │   │   └── file-storage.ts           # Storage types
 │   │
 │   └── config/
@@ -162,6 +173,8 @@ fluffy-viz/
 │       ├── parser.config.ts          # Parser limits
 │       ├── provider-settings.ts      # Provider metadata
 │       └── prompts/                  # YAML template files
+│           ├── *.yaml                # AI column templates
+│           └── cluster-labeling.yaml # Cluster labeling prompts
 │
 ├── CLAUDE.md                         # AI assistant context
 ├── PROVIDER_CONFIG.md                # Provider setup guide
@@ -284,20 +297,398 @@ AddColumnModal
 ### 5. Embedding Pipeline
 
 ```
-EmbeddingWizard
-  → Select composition mode (single/multi/conversational)
-  → composeTexts() creates text array
-  → generateEmbeddings() via provider API
-  → umapReduce() projects to 2D
-  → saveEmbeddingLayer() persists to DuckDB
-  → EmbeddingVisualization renders with Mosaic
+┌─────────────────────────────────────────────────────────────────┐
+│                    Embedding Pipeline                            │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  EmbeddingWizard                                                 │
+│       │                                                          │
+│       ▼                                                          │
+│  ┌─────────────────┐                                            │
+│  │ 1. Compose Text │ Single / Multi / Conversational            │
+│  └────────┬────────┘                                            │
+│           │                                                      │
+│           ▼                                                      │
+│  ┌─────────────────┐                                            │
+│  │ 2. Batch Embed  │ OpenAI / Cohere API                        │
+│  └────────┬────────┘                                            │
+│           │                                                      │
+│           ▼                                                      │
+│  ┌─────────────────┐                                            │
+│  │ 3. UMAP 15D     │ min_dist=0.0 (for clustering)              │
+│  │    (clustering) │ nNeighbors from config                     │
+│  └────────┬────────┘                                            │
+│           │                                                      │
+│           ▼                                                      │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │ 4. Hybrid Clustering                                     │    │
+│  │    ┌──────────────────────────────────────────────────┐ │    │
+│  │    │ HDBSCAN on 15D UMAP → Discover k                 │ │    │
+│  │    └──────────────────────────────────────────────────┘ │    │
+│  │    ┌──────────────────────────────────────────────────┐ │    │
+│  │    │ K-Means on original embeddings                   │ │    │
+│  │    │ Test k in [k-2, k+5] with silhouette score      │ │    │
+│  │    └──────────────────────────────────────────────────┘ │    │
+│  │    ┌──────────────────────────────────────────────────┐ │    │
+│  │    │ Final assignment: 100% points clustered         │ │    │
+│  │    └──────────────────────────────────────────────────┘ │    │
+│  └─────────────────────────────────────────────────────────┘    │
+│           │                                                      │
+│           ▼                                                      │
+│  ┌─────────────────┐                                            │
+│  │ 5. Clear Memory │ Free tiktoken + UMAP before Stage 2       │
+│  └────────┬────────┘                                            │
+│           │                                                      │
+│           ▼                                                      │
+│  ┌─────────────────┐                                            │
+│  │ 6. UMAP 2D      │ min_dist=0.1 (for visualization)          │
+│  │  (visualization)│                                            │
+│  └────────┬────────┘                                            │
+│           │                                                      │
+│           ▼                                                      │
+│  ┌─────────────────┐                                            │
+│  │ 7. Compute KNN  │ k=10 neighbors per point                   │
+│  └────────┬────────┘                                            │
+│           │                                                      │
+│           ▼                                                      │
+│  ┌─────────────────┐                                            │
+│  │ 8. Store Layer  │ DuckDB + OPFS (15D coords)                 │
+│  └────────┬────────┘                                            │
+│           │                                                      │
+│           ▼                                                      │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │  EmbeddingVisualization (embedding-atlas)                │    │
+│  │    → Points / Density view modes                        │    │
+│  │    → Auto cluster labels                                │    │
+│  │    → Re-clustering with parameter tuning                │    │
+│  │    → Save filter from selection                         │    │
+│  └─────────────────────────────────────────────────────────┘    │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 **Key Files**:
 - `src/components/embedding-viewer/embedding-wizard.tsx`
+- `src/components/embedding-viewer/embedding-visualization.tsx`
+- `src/components/embedding-viewer/agent-trace-viewer.tsx`
 - `src/lib/embedding/text-composer.ts`
 - `src/lib/embedding/batch-embedder.ts`
 - `src/lib/embedding/umap-reducer.ts`
+- `src/lib/embedding/clustering.ts`
+- `src/lib/embedding/kmeans.ts`
+- `src/lib/embedding/clustering-coords-storage.ts`
+
+---
+
+## Clustering System
+
+### Hybrid HDBSCAN + K-Means Approach
+
+FluffyViz uses a two-stage clustering approach that combines the benefits of density-based discovery with complete point assignment:
+
+```typescript
+// src/lib/embedding/clustering.ts
+
+export interface HybridClusterResult {
+  labels: number[];              // Cluster ID per point (0 to k-1, no -1 outliers)
+  clusterCount: number;          // Number of clusters
+  clusterSizes: Map<number, number>;
+  kEstimate: number;             // k discovered by HDBSCAN
+  optimalK: number;              // k selected by silhouette score
+  silhouetteScore: number;       // Best silhouette score
+  method: 'hybrid';
+}
+
+/**
+ * Stage 1: HDBSCAN k-discovery on 15D UMAP
+ * - Runs HDBSCAN on intermediate-dimensional UMAP projection
+ * - min_dist=0.0 creates tight clusters for better density detection
+ * - Returns natural cluster count without requiring k upfront
+ *
+ * Stage 2: K-Means optimization on original embeddings
+ * - L2-normalizes embeddings for cosine-like distance
+ * - Tests k in range [k_estimate - 2, k_estimate + 5]
+ * - Selects k with highest silhouette score
+ * - Final assignment: 100% of points clustered (no outliers)
+ */
+export async function hybridCluster(
+  umapCoords15D: number[][],
+  originalEmbeddings: number[][],
+  config: ClusterConfig
+): Promise<HybridClusterResult>;
+```
+
+### Clustering Configuration
+
+```typescript
+// src/types/embedding.ts
+
+export interface ClusterConfig {
+  minClusterSize: number;  // 5-50, default: 10
+  minSamples: number;      // 1-15, default: 3
+  nNeighbors: number;      // 15-100, default: 30
+}
+
+export const DEFAULT_CLUSTER_CONFIG: ClusterConfig = {
+  minClusterSize: 10,  // Min points to form a cluster
+  minSamples: 3,       // Core point threshold for HDBSCAN
+  nNeighbors: 30,      // UMAP neighborhood size
+};
+```
+
+### K-Means with Silhouette Scoring
+
+```typescript
+// src/lib/embedding/kmeans.ts
+
+/**
+ * Find optimal k using silhouette score
+ * Tests k values in range and returns k with highest silhouette
+ */
+export function findOptimalK(
+  data: number[][],
+  kMin: number,
+  kMax: number
+): { optimalK: number; scores: Map<number, number>; labels: number[] };
+
+/**
+ * Silhouette score for clustering quality
+ * Higher is better: -1 (worst) to +1 (best)
+ *
+ * For each point:
+ * - a = mean distance to points in same cluster
+ * - b = mean distance to points in nearest other cluster
+ * - silhouette = (b - a) / max(a, b)
+ */
+export function silhouetteScore(data: number[][], labels: number[]): number;
+```
+
+### Why This Approach?
+
+1. **HDBSCAN alone** (previous approach):
+   - Great at finding density-based clusters
+   - Labels 50%+ points as noise/outliers
+   - Inconsistent results
+
+2. **K-Means alone**:
+   - Requires knowing k upfront
+   - Assigns all points (no outliers)
+   - May create arbitrary clusters
+
+3. **Hybrid approach** (current):
+   - HDBSCAN discovers natural k
+   - K-Means tests range with silhouette validation
+   - 100% point assignment with quality metric
+
+### Browser Console Tools for Cluster Exploration
+
+FluffyViz provides browser console tools (`window.clusterSim`) for advanced cluster analysis, hierarchical organization, and LLM-based labeling. Access via the browser Developer Console (F12).
+
+**Initialization:**
+```javascript
+// Get layer ID from the embedding visualization URL or console log
+const layerId = 'emb_xxxxx';
+```
+
+#### Similarity Analysis
+
+```javascript
+// Compute cosine similarity between two cluster centroids
+await clusterSim.similarity(layerId, 9, 13)
+// Output: "Cluster 9 ↔ Cluster 13: 0.8234 (Similar - consider merging)"
+
+// Find top 10 neighbors of a specific cluster
+await clusterSim.neighbors(layerId, 9)
+// Output: Table of clusters sorted by similarity
+
+// Find all cluster pairs above similarity threshold
+await clusterSim.findSimilar(layerId, 0.85)
+// Output: List of merge candidates
+
+// Get full pairwise similarity matrix (sorted by similarity)
+await clusterSim.allSimilarities(layerId)
+// Output: Complete matrix with top 15 pairs highlighted
+```
+
+#### Agglomerative Clustering
+
+Build hierarchical super-topics by merging similar clusters:
+
+```javascript
+// Merge clusters into super-topics based on centroid similarity
+// Linkage options: 'average' (default), 'single', 'complete'
+await clusterSim.agglomerate(layerId, 0.80)                   // average linkage
+await clusterSim.agglomerate(layerId, 0.80, 'single')         // single linkage
+await clusterSim.agglomerate(layerId, 0.80, 'complete')       // complete linkage
+```
+
+**Linkage Methods:**
+- **Average**: Mean similarity between all pairs (balanced approach)
+- **Single**: Max similarity (closest pair) → tends to chain clusters
+- **Complete**: Min similarity (furthest pair) → creates compact clusters
+
+**Output:**
+```
+[Agglomerative] RESULTS (threshold=0.80, linkage=average)
+Total super-topics: 12
+Largest super-topic: 156 points (4 clusters)
+Largest clusters: [2, 5, 11, 14]
+Singletons (unmerged): 5
+
+Top 10 Super-Topics:
+┌────────┬─────────┬──────────┬─────────────────────────────────────┐
+│ ST ID  │  Points │ Clusters │ Cluster IDs                         │
+├────────┼─────────┼──────────┼─────────────────────────────────────┤
+│      0 │     156 │        4 │ 2, 5, 11, 14                        │
+│      1 │     134 │        3 │ 0, 3, 8                             │
+...
+```
+
+#### LLM Cluster Labeling
+
+Generate semantic labels for clusters using an LLM:
+
+```javascript
+// Label a single cluster
+await clusterSim.labelCluster(layerId, 9)
+await clusterSim.labelCluster(layerId, 9, { modelId: 'gpt-4o' })
+await clusterSim.labelCluster(layerId, 9, { sampleSize: 10 })
+
+// Label all clusters with concurrency control
+await clusterSim.labelAllClusters(layerId)
+await clusterSim.labelAllClusters(layerId, { concurrency: 5, modelId: 'gpt-4o' })
+```
+
+**Output:**
+```json
+{
+  "clusterId": 9,
+  "title": "Python Debugging Requests",
+  "labels": ["coding", "python", "troubleshooting", "debugging"],
+  "description": "Users seeking help with Python errors, exceptions, and debugging techniques."
+}
+```
+
+#### Cache Management
+
+```javascript
+clusterSim.clearCache()       // Clear centroid cache (after re-clustering)
+clusterSim.clearLabelCache()  // Clear LLM label cache
+clusterSim.getCachedLabels()  // Get all cached labels as Map
+```
+
+**Key Files:**
+- `src/lib/embedding/cluster-similarity.ts` - Console tools implementation
+- `src/config/prompts/cluster-labeling.yaml` - LLM prompts for labeling
+- `src/app/api/cluster-label/route.ts` - API endpoint for LLM calls
+
+### Cluster Labeling API
+
+The `/api/cluster-label` endpoint supports multiple prompt types for different use cases:
+
+```typescript
+interface ClusterLabelRequest {
+  clusterId: number;
+  samples: { user_message: string; assistant_message: string }[];
+  providerId?: string;   // Default: 'openai'
+  modelId?: string;      // Default: 'gpt-5.2'
+  promptType?: 'cluster_label' | 'super_topic_label' | 'super_topic_validation' | 'singleton_analysis';
+  context?: {            // Additional context for super-topic prompts
+    threshold?: number;
+    linkage?: string;
+    clusterCount?: number;
+    // ... other fields
+  };
+}
+```
+
+**Prompt Types:**
+- `cluster_label`: Generate title, labels, description for a single cluster
+- `super_topic_label`: Create unified label for merged super-topic
+- `super_topic_validation`: Validate agglomerative clustering quality
+- `singleton_analysis`: Analyze unmerged singleton clusters
+
+### Experimental Approaches for Cluster Hierarchy
+
+These console tools enable exploration of different approaches to building cluster hierarchies:
+
+#### A. Embedding Agglomerative Clustering (Implemented)
+Cluster on **centroid embeddings** with configurable linkage:
+
+```javascript
+// Compare linkage methods at same threshold
+const avg = await clusterSim.agglomerate(layerId, 0.80, 'average');
+const single = await clusterSim.agglomerate(layerId, 0.80, 'single');
+const complete = await clusterSim.agglomerate(layerId, 0.80, 'complete');
+```
+
+#### B. Label Embedding Clustering (Planned)
+Instead of clustering on centroids, cluster on **LLM-generated label embeddings**:
+1. Generate labels for all clusters: `await clusterSim.labelAllClusters(layerId)`
+2. Embed the titles/descriptions using same embedding model
+3. Compute cosine similarity between label embeddings
+4. Agglomerate based on label similarity
+
+**Benefits**: Labels capture semantic meaning explicitly, more interpretable
+**Drawbacks**: Requires LLM call per cluster, dependent on label quality
+
+#### C. LLM Validation Pass (Planned)
+After agglomerative clustering, validate each super-topic with LLM:
+- Use `super_topic_validation` prompt from YAML
+- Scores: semantic coherence, intent alignment, granularity appropriateness
+- Suggestions: split, keep, or reassign clusters
+
+#### D. Manual Merge in UI (Planned)
+Let users manually merge singleton clusters in the visualization:
+- Select clusters in the scatter plot
+- Review cluster labels and samples
+- Merge into existing super-topic or create new one
+
+---
+
+## Memory Management
+
+### WASM Module Coordination
+
+FluffyViz uses multiple WASM modules that must be carefully managed:
+
+```typescript
+// src/components/embedding-viewer/agent-trace-viewer.tsx
+
+// Critical: Free tiktoken before UMAP to prevent memory overflow
+console.log('[Embedding Generation] Freeing tiktoken encoder before UMAP...');
+await freeTiktokenEncoder();
+
+// Run first UMAP (15D for clustering)
+const { coordinates: clusteringCoords } = await computeUMAPForClustering(embeddings, 15);
+
+// Run hybrid clustering
+const clusterResult = await hybridCluster(clusteringCoords, embeddings, clusterConfig);
+
+// Critical: Clear UMAP memory before second projection
+console.log('[Embedding Generation] Clearing UMAP memory before visualization projection...');
+await clearUMAPMemory();
+
+// Run second UMAP (2D for visualization)
+const { coordinates2D } = await computeUMAPProjection(embeddings);
+```
+
+### OPFS Storage for Re-clustering
+
+15D clustering coordinates are stored in Origin Private File System (OPFS) for efficient re-clustering:
+
+```typescript
+// src/lib/embedding/clustering-coords-storage.ts
+
+export async function saveClusteringCoordinates(
+  layerId: string,
+  coordinates: number[][]
+): Promise<void>;
+
+export async function loadClusteringCoordinates(
+  layerId: string
+): Promise<number[][] | null>;
+```
 
 ---
 
@@ -357,6 +748,21 @@ CREATE TABLE cell_metadata (
 );
 ```
 
+**Embedding Points** (`embedding_points` table):
+```sql
+CREATE TABLE embedding_points (
+  layer_id VARCHAR,
+  point_id VARCHAR,
+  x DOUBLE,
+  y DOUBLE,
+  composed_text TEXT,
+  cluster_id INTEGER,
+  neighbors TEXT,           -- JSON array of {ids, distances}
+  source_row_indices TEXT,  -- JSON array of row indices
+  PRIMARY KEY (layer_id, point_id)
+);
+```
+
 ### Key Operations
 
 ```typescript
@@ -383,9 +789,11 @@ export async function batchUpdateColumn(
   updates: { rowIndex: number, value: any }[]
 ): Promise<void>;
 
-// Save cell inference metadata
-export async function saveCellMetadata(
-  metadata: CellMetadata
+// Update cluster assignments
+export async function updateClusterAssignments(
+  layerId: string,
+  labels: number[],
+  pointIds: string[]
 ): Promise<void>;
 
 // Persist database to IndexedDB
@@ -501,7 +909,88 @@ export async function generateCompletion(
 }
 ```
 
-### Web Search Configuration
+---
+
+## Type Definitions
+
+### Embedding Types
+
+```typescript
+// src/types/embedding.ts
+
+export type CompositionMode = 'single' | 'multi' | 'conversational';
+
+export type ConversationalStrategy =
+  | 'turn-only'
+  | 'history-until'
+  | 'turn-plus-n'
+  | 'full-conversation';
+
+export interface ClusterConfig {
+  minClusterSize: number;  // 5-50, default: 10
+  minSamples: number;      // 1-15, default: 3
+  nNeighbors: number;      // 15-100, default: 30
+}
+
+export interface ClusterStats {
+  clusterCount: number;
+  noiseCount: number;
+  noisePercentage: number;
+  clusterSizes: Record<number, number>;
+}
+
+export interface EmbeddingPoint {
+  id: string;
+  embedding: number[];
+  coordinates2D: [number, number];
+  sourceRowIndices: number[];
+  label?: string;
+  composedText: string;
+  metadata?: Record<string, unknown>;
+  neighbors?: NeighborData;
+  clusterId?: number;
+}
+
+export interface ActiveEmbeddingLayer {
+  id: string;
+  fileId: string;
+  name: string;
+  provider: string;
+  model: string;
+  dimension: number;
+  compositionMode: CompositionMode;
+  compositionConfig: CompositionConfig;
+  clusterConfig?: ClusterConfig;
+  clusterStats?: ClusterStats;
+  points: EmbeddingPoint[];
+  createdAt: string;
+  lastAccessedAt: string;
+}
+```
+
+### Model Types
+
+```typescript
+// src/types/models.ts
+
+export interface Model {
+  id: string;
+  name: string;
+  provider: string;
+  searchSupport?: boolean;
+  searchBuiltIn?: boolean;
+  apiMode?: 'responses' | 'completions';
+}
+
+export interface ModelProvider {
+  id: string;
+  name: string;
+  displayName: string;
+  apiKey: string;
+}
+```
+
+### Web Search Types
 
 ```typescript
 // src/types/web-search.ts
@@ -522,95 +1011,6 @@ export interface SearchSource {
   title?: string;
   snippet?: string;
 }
-```
-
-### Source Extraction
-
-Sources are extracted from different locations based on provider:
-
-```typescript
-function extractSources(result: any, providerId: string): SearchSource[] {
-  const sources: SearchSource[] = [];
-
-  // Direct sources (Perplexity)
-  if (result.sources) {
-    sources.push(...result.sources.map(s => ({ url: s.url, title: s.title })));
-  }
-
-  // Provider metadata - Perplexity
-  if (result.providerMetadata?.perplexity?.sources) {
-    sources.push(...result.providerMetadata.perplexity.sources);
-  }
-
-  // Provider metadata - OpenAI annotations
-  if (result.providerMetadata?.openai?.annotations) {
-    for (const ann of result.providerMetadata.openai.annotations) {
-      if (ann.type === 'url_citation') {
-        sources.push({ url: ann.url, title: ann.title });
-      }
-    }
-  }
-
-  // Tool results (OpenAI web_search_preview)
-  if (result.toolResults) {
-    for (const tr of result.toolResults) {
-      if (tr.toolName?.includes('search') && tr.result?.sources) {
-        sources.push(...tr.result.sources);
-      }
-    }
-  }
-
-  return sources;
-}
-```
-
----
-
-## Template System
-
-### Template Definition
-
-```typescript
-// src/config/ai-column-templates.ts
-export const AI_COLUMN_TEMPLATES: ColumnTemplate[] = [
-  {
-    id: 'translate',
-    name: 'Translate',
-    description: 'Translate text to specified language',
-    category: 'transformation',
-    promptFile: 'translate.yaml',
-    variables: [
-      { id: 'input', name: 'Input Column', required: true },
-      { id: 'target_language', name: 'Target Language', default: 'Spanish' }
-    ]
-  },
-  // ... more templates
-];
-```
-
-### YAML Structure
-
-```yaml
-# config/prompts/translate.yaml
-category: Transformation
-title: Translate Text
-prompt_params:
-  system_instruction: |
-    You are a professional translator.
-  prompt_template: |
-    Translate to {{target_language}}:
-    {{input}}
-template_variables:
-  - id: input
-    display_name: Input Text
-    required: true
-  - id: target_language
-    display_name: Target Language
-    default: Spanish
-inference_config:
-  generation:
-    max_new_tokens: 1000
-    temperature: 0.3
 ```
 
 ---
@@ -657,48 +1057,82 @@ Returns parsed YAML model definitions with provider injection.
 
 Reads/writes `provider-config.json` with API keys and capabilities.
 
----
+### Cluster Label
 
-## Type Definitions
+**Endpoint**: `POST /api/cluster-label`
 
-### Core Types
+Generates semantic labels for clusters using LLM.
 
 ```typescript
-// src/types/models.ts
-export interface Model {
-  id: string;
-  name: string;
-  provider: string;
-  searchSupport?: boolean;
-  searchBuiltIn?: boolean;
-  apiMode?: 'responses' | 'completions';
+// Request
+{
+  clusterId: number;
+  samples: Array<{ user_message: string; assistant_message: string }>;
+  providerId?: string;   // Default: 'openai'
+  modelId?: string;      // Default: 'gpt-5.2'
+  promptType?: 'cluster_label' | 'super_topic_label' | 'super_topic_validation' | 'singleton_analysis';
+  context?: {            // Additional context for super-topic prompts
+    threshold?: number;
+    linkage?: string;
+    clusterCount?: number;
+    clusterSummaries?: string;
+    // ... other fields
+  };
 }
 
-export interface ModelProvider {
-  id: string;
-  name: string;
-  displayName: string;
-  apiKey: string;
+// Response
+{
+  clusterId: number;
+  promptType: string;
+  title: string;
+  labels: string[];
+  description: string;
 }
+```
 
-// src/types/web-search.ts
-export interface WebSearchConfig {
-  enabled: boolean;
-  contextSize: SearchContextSize;
-  userLocation?: UserLocation;
-}
+**Prompt Types:**
+- `cluster_label`: Basic cluster labeling (title, labels, description)
+- `super_topic_label`: Label for merged super-topic
+- `super_topic_validation`: Validate agglomerative clustering quality
+- `singleton_analysis`: Analyze unmerged singleton clusters
 
-// src/lib/duckdb/types.ts
-export interface CellMetadata {
-  fileId: string;
-  columnId: string;
-  rowIndex: number;
-  status: 'pending' | 'success' | 'failed';
-  error?: string;
-  errorType?: string;
-  edited: boolean;
-  sources?: Array<{ url: string; title?: string }>;
+Prompts are defined in `src/config/prompts/cluster-labeling.yaml`.
+
+---
+
+## Visualization Controls
+
+### View Configuration
+
+```typescript
+// src/components/embedding-viewer/embedding-visualization.tsx
+
+interface EmbeddingViewConfig {
+  mode: 'points' | 'density';        // View mode
+  minimumDensity?: number;           // Density threshold (0.001-0.1)
+  pointSize?: number;                // Point size (1-20, null = auto)
+  autoLabelEnabled?: boolean;        // Enable auto cluster labels
+  autoLabelDensityThreshold?: number; // Label threshold (0.01-0.5)
 }
+```
+
+### Re-clustering
+
+```typescript
+const handleRecluster = async () => {
+  // Load 15D coords from OPFS
+  const clusteringCoords = await loadClusteringCoordinates(layer.id);
+
+  // Run hybrid clustering
+  const result = await hybridCluster(clusteringCoords, originalEmbeddings, clusterConfig);
+
+  // Update DuckDB
+  await updateClusterAssignments(layer.id, result.labels, pointIds);
+  await updateClusterMetadata(layer.id, clusterConfig, newStats);
+
+  // Force visualization refresh
+  setViewConfigVersion(v => v + 1);
+};
 ```
 
 ---
@@ -712,10 +1146,15 @@ src/
 ├── lib/
 │   └── __tests__/
 │       ├── format-parser.test.ts
-│       └── format-detector.test.ts
+│       ├── ai-inference.test.ts
+│       └── prompt-serializer.test.ts
 ├── hooks/
 │   └── __tests__/
 │       └── use-file-storage.test.ts
+└── lib/duckdb/
+    └── __tests__/
+        ├── client.test.ts
+        └── operations.test.ts
 ```
 
 ### Running Tests
@@ -775,6 +1214,8 @@ Tracked at: https://github.com/vercel/ai/issues/5834
 - **Lazy Loading**: Heavy components loaded dynamically
 - **Debouncing**: 300ms for search/filter inputs
 - **Batch Processing**: AI inference and DuckDB updates batched
+- **Memory Management**: WASM modules freed between operations
+- **OPFS Storage**: 15D coords stored for efficient re-clustering
 
 ---
 
@@ -785,7 +1226,7 @@ Tracked at: https://github.com/vercel/ai/issues/5834
 - Safari 14+
 - Edge 90+
 
-Requires: IndexedDB, Web Workers, ES2020+
+Requires: IndexedDB, Web Workers, ES2020+, OPFS
 
 ---
 
@@ -810,5 +1251,5 @@ Requires: IndexedDB, Web Workers, ES2020+
 
 1. Add to `SupportedFormat` type
 2. Add detector in `format-detector.ts`
-3. Add parser in `format-parser.ts`
+3. Add parser in `format-parser.ts` (in `parseByFormat()`)
 4. Test with sample file

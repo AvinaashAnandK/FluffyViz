@@ -58,13 +58,16 @@ The UI writes changes back to `provider-config.json` automatically.
 
 Supported providers:
 
-- `openai` - OpenAI (GPT-4, GPT-3.5)
-- `anthropic` - Anthropic (Claude)
+- `openai` - OpenAI (GPT-4o, GPT-4.1, GPT-3.5)
+- `anthropic` - Anthropic (Claude 3/3.5 Sonnet, Opus, Haiku)
+- `google` - Google AI (Gemini 1.5/2.0 Pro, Flash)
+- `perplexity` - Perplexity (Sonar, Sonar Pro) - Built-in web search
 - `cohere` - Cohere (Command, Embed)
-- `groq` - Groq (fast Llama inference)
+- `groq` - Groq (fast Llama/Mixtral inference)
+- `mistral` - Mistral AI (Large, Medium, Small)
+- `together` - Together AI (open source models)
 - `huggingface` - HuggingFace Inference API
-- `google` - Google AI (Gemini)
-- `mistral` - Mistral AI
+- `novita` - Novita AI (alternative provider)
 
 ### Capabilities
 
@@ -254,6 +257,74 @@ git rm --cached provider-config.json
 git check-ignore provider-config.json
 ```
 
+## Web Search Support
+
+FluffyViz supports real-time web search augmentation for AI columns.
+
+### Providers with Web Search
+
+| Provider | Search Type | Configuration |
+|----------|-------------|---------------|
+| OpenAI | Tool-based | Enable web search toggle, uses `web_search_preview` tool |
+| Perplexity | Built-in | Always searches, search toggle has no effect |
+| Google | Grounding | Enable web search toggle, uses search grounding |
+
+### Perplexity (Built-in Search)
+
+Perplexity models always include web search - it's built into their API:
+
+```json
+{
+  "providers": {
+    "perplexity": {
+      "apiKey": "pplx-...",
+      "enabled": true,
+      "capabilities": {
+        "text": true,
+        "image": false,
+        "embedding": false,
+        "mmEmbedding": false
+      }
+    }
+  }
+}
+```
+
+**Recommended Models:**
+- `sonar-pro` - Best quality, recommended for production
+- `sonar` - Faster, good for development
+
+**Note:** The web search toggle in the UI has no effect for Perplexity - search is always on. Location settings still apply.
+
+### OpenAI (Responses API)
+
+OpenAI models use the Responses API with the `web_search_preview` tool:
+
+```json
+{
+  "providers": {
+    "openai": {
+      "apiKey": "sk-...",
+      "enabled": true,
+      "capabilities": {
+        "text": true,
+        "image": true,
+        "embedding": true,
+        "mmEmbedding": false
+      }
+    }
+  }
+}
+```
+
+**Recommended Models:**
+- `gpt-4o` - Best balance of quality and speed
+- `gpt-4.1` - Latest model with improved reasoning
+
+Enable the web search toggle in Generation Settings to use search.
+
+---
+
 ## Known Issues
 
 ### OpenAI Search-Preview Models Not Supported
@@ -318,9 +389,15 @@ interface ProviderConfig {
 - File changes reflect in UI on reload
 - Choose whichever workflow you prefer
 
-## Integration with AI Inference
+## Integration with AI Features
 
-The configuration is consumed by the AI inference system:
+The configuration is used by multiple AI features:
+
+**1. Column Generation** - AI-powered data augmentation
+**2. Web Search** - Real-time search augmentation (OpenAI, Perplexity, Google)
+**3. Cluster Labeling** - LLM-based semantic labels for embedding clusters
+
+### Usage in Code
 
 ```typescript
 import { useProviderConfig } from '@/hooks/use-provider-config'

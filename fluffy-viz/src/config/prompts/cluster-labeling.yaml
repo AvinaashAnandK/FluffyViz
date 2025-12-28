@@ -1,0 +1,278 @@
+# Cluster Labeling Prompts
+# Used by browser console tools for cluster analysis and hierarchical organization
+
+# =============================================================================
+# CLUSTER LABELING
+# =============================================================================
+# Purpose: Generate title, labels, and description for a single K-Means cluster
+# Input: Sample conversations from a cluster
+# Output: JSON with title, labels, description
+
+cluster_label:
+  name: "Cluster Label"
+  description: "Generate semantic metadata for a single cluster based on sample conversations"
+  temperature: 0.3
+  max_tokens: 500
+  prompt: |
+    You are an expert at identifying common intents and themes in conversations and assigning concise, high-signal cluster metadata.
+
+    ## Task
+    Given {{SAMPLE_COUNT}} sample conversations from cluster {{CLUSTER_ID}}, infer the shared theme and produce:
+    1. **title**: A specific 3–5 word title (no punctuation-heavy titles; avoid "General", "Misc", "Help")
+    2. **labels**: 3–6 tags (single words or short phrases, lowercase, no duplicates)
+    3. **description**: 1–2 sentences describing the typical user intent + context (what they're trying to achieve and why)
+
+    ## How to decide the theme
+    - Prioritize **intent** over topic: what users want done (e.g., "debug build errors", "draft apology email", "plan weekend itinerary").
+    - Use patterns across **most samples**; if there are two distinct intents, pick the dominant one and reflect the other in labels.
+    - If the cluster is genuinely mixed, title it by the **shared umbrella intent** (e.g., "writing polish requests"), not by a narrow example.
+
+    ## Title rules (3–5 words)
+    - Make it discriminative: include the object + action when possible ("resume bullet rewrites", "python install troubleshooting").
+    - Avoid generic phrasing ("questions", "assistance", "miscellaneous", "general help").
+    - Avoid product names unless the product is central in most samples.
+
+    ## Label rules (3–6 tags)
+    - Tags must be useful for filtering and reusable across clusters.
+    - Include a mix when relevant:
+      - domain (e.g., "coding", "career", "travel", "health")
+      - task type (e.g., "troubleshooting", "summarization", "brainstorming", "planning")
+      - audience/level (e.g., "beginner", "advanced") if strongly evidenced
+    - Prefer short phrases over long ones (max 2–3 words).
+    - Use lowercase; no punctuation; no trailing spaces.
+
+    ## Description rules (1–2 sentences)
+    - Sentence 1: typical user goal (what outcome they want).
+    - Sentence 2 (optional): common constraints/tools/context (formatting, tone, platform, timeframe).
+    - Don't describe the assistant; describe the users' needs.
+
+    ## Input samples
+    {{SAMPLES}}
+
+    ## Output requirements
+    Return **valid JSON only** (no markdown, no code fences, no commentary).
+    - Keys must be exactly: "title", "labels", "description"
+    - "labels" must be an array of strings
+    - Do not include nulls or extra keys
+    - Ensure the JSON parses
+
+# =============================================================================
+# SUPER-TOPIC LABELING
+# =============================================================================
+# Purpose: Generate a unified label for a super-topic (merged clusters from agglomeration)
+# Input: Titles and descriptions of member clusters
+# Output: JSON with super-topic title, labels, description
+
+super_topic_label:
+  name: "Super-Topic Label"
+  description: "Generate unified metadata for a super-topic from its constituent cluster labels"
+  temperature: 0.3
+  max_tokens: 500
+  prompt: |
+    You are an expert at synthesizing cluster metadata into higher-level thematic categories.
+
+    ## Task
+    Given {{CLUSTER_COUNT}} clusters that were merged into a super-topic based on semantic similarity (threshold={{THRESHOLD}}, linkage={{LINKAGE}}), create a unified super-topic label.
+
+    ## Member Clusters
+    {{CLUSTER_SUMMARIES}}
+
+    ## Instructions
+    1. Identify the **common thread** that unifies these clusters
+    2. Create a **broader but still specific** title that encompasses all member themes
+    3. Merge and deduplicate labels, keeping the most representative ones
+    4. Write a description that captures the shared user intent across all members
+
+    ## Super-Topic Title Rules
+    - Should be 3–5 words, slightly more abstract than individual cluster titles
+    - Must meaningfully encompass ALL member clusters
+    - Avoid overly generic titles ("Various Requests", "Mixed Topics")
+    - Example: if clusters are "Python Debugging", "JavaScript Errors", "Build Failures" → super-topic could be "Code Error Resolution"
+
+    ## Output requirements
+    Return **valid JSON only** (no markdown, no code fences, no commentary).
+    ```json
+    {
+      "title": "Super-Topic Title",
+      "labels": ["label1", "label2", "label3"],
+      "description": "1-2 sentences describing the unified theme.",
+      "member_cluster_ids": [1, 2, 3],
+      "rationale": "Brief explanation of why these clusters belong together."
+    }
+    ```
+
+# =============================================================================
+# SUPER-TOPIC VALIDATION
+# =============================================================================
+# Purpose: LLM validation pass to verify agglomerative clustering quality
+# Input: Super-topic with member cluster samples
+# Output: JSON with validation result, confidence, and suggestions
+
+super_topic_validation:
+  name: "Super-Topic Validation"
+  description: "Validate whether merged clusters genuinely belong together as a super-topic"
+  temperature: 0.2
+  max_tokens: 600
+  prompt: |
+    You are an expert at evaluating the coherence of topic clusters in conversation data.
+
+    ## Task
+    Validate whether the following clusters should remain merged as a super-topic, or if the agglomerative clustering made an error.
+
+    ## Super-Topic Information
+    - **Super-Topic ID**: {{SUPER_TOPIC_ID}}
+    - **Similarity Threshold**: {{THRESHOLD}}
+    - **Linkage Method**: {{LINKAGE}}
+    - **Member Clusters**: {{CLUSTER_COUNT}}
+
+    ## Member Cluster Details
+    {{CLUSTER_DETAILS}}
+
+    ## Sample Conversations from Each Cluster
+    {{SAMPLES_BY_CLUSTER}}
+
+    ## Validation Criteria
+    Evaluate the super-topic on these dimensions:
+
+    1. **Semantic Coherence** (0-100): Do all clusters share a meaningful common theme?
+       - 90-100: Clearly belong together, obvious shared intent
+       - 70-89: Related themes, reasonable grouping
+       - 50-69: Loosely related, borderline grouping
+       - 0-49: Should not be merged, distinct topics
+
+    2. **Intent Alignment** (0-100): Do users in all clusters want similar outcomes?
+       - Consider: Are they trying to accomplish the same type of task?
+
+    3. **Granularity Appropriateness** (0-100): Is this the right level of abstraction?
+       - Too broad: Super-topic is meaningless umbrella
+       - Too narrow: Clusters are nearly identical, redundant merge
+       - Just right: Meaningful hierarchy without loss of information
+
+    ## Output Requirements
+    Return **valid JSON only**:
+    ```json
+    {
+      "super_topic_id": 0,
+      "validation_result": "valid" | "questionable" | "invalid",
+      "overall_score": 0-100,
+      "scores": {
+        "semantic_coherence": 0-100,
+        "intent_alignment": 0-100,
+        "granularity": 0-100
+      },
+      "confidence": "high" | "medium" | "low",
+      "issues": ["List of specific problems found, if any"],
+      "suggestions": [
+        {
+          "action": "split" | "keep" | "reassign",
+          "cluster_ids": [1, 2],
+          "reason": "Why this action is recommended"
+        }
+      ],
+      "recommended_title": "Suggested super-topic title if different from current",
+      "rationale": "2-3 sentences explaining the validation decision"
+    }
+    ```
+
+    ## Decision Guidelines
+    - **valid**: overall_score >= 75, no major issues
+    - **questionable**: overall_score 50-74, some concerns but defensible
+    - **invalid**: overall_score < 50, clusters should not be merged
+
+# =============================================================================
+# SINGLETON ANALYSIS
+# =============================================================================
+# Purpose: Analyze singleton clusters (not merged during agglomeration) for potential matches
+# Input: Singleton cluster info + list of super-topics
+# Output: JSON with merge recommendations
+
+singleton_analysis:
+  name: "Singleton Analysis"
+  description: "Analyze unmerged singleton clusters and suggest potential super-topic assignments"
+  temperature: 0.3
+  max_tokens: 500
+  prompt: |
+    You are an expert at analyzing outlier clusters and finding appropriate groupings.
+
+    ## Task
+    This cluster remained as a singleton (not merged with any other clusters) during agglomerative clustering at threshold {{THRESHOLD}}.
+
+    Analyze whether this cluster:
+    1. Should remain independent (truly unique topic)
+    2. Could be merged with an existing super-topic at a lower threshold
+    3. Represents noise/garbage data that should be flagged for review
+
+    ## Singleton Cluster
+    - **Cluster ID**: {{CLUSTER_ID}}
+    - **Size**: {{CLUSTER_SIZE}} points
+    - **Title**: {{CLUSTER_TITLE}}
+    - **Labels**: {{CLUSTER_LABELS}}
+    - **Description**: {{CLUSTER_DESCRIPTION}}
+
+    ## Sample Conversations
+    {{SAMPLES}}
+
+    ## Available Super-Topics
+    {{SUPER_TOPICS}}
+
+    ## Output Requirements
+    Return **valid JSON only**:
+    ```json
+    {
+      "cluster_id": 0,
+      "recommendation": "keep_independent" | "suggest_merge" | "flag_for_review",
+      "confidence": "high" | "medium" | "low",
+      "reasoning": "2-3 sentences explaining the recommendation",
+      "potential_merges": [
+        {
+          "super_topic_id": 0,
+          "super_topic_title": "Title",
+          "similarity_estimate": 0.0-1.0,
+          "merge_reasoning": "Why this could work"
+        }
+      ],
+      "is_noise": false,
+      "noise_indicators": ["List of reasons if flagged as noise"]
+    }
+    ```
+
+# =============================================================================
+# LABEL EMBEDDING CLUSTERING
+# =============================================================================
+# Purpose: Generate embeddings for cluster labels to enable label-based hierarchical clustering
+# Input: All cluster labels
+# Output: Instructions for label embedding approach
+
+label_embedding_instructions:
+  name: "Label Embedding Clustering"
+  description: "Instructions for clustering based on label embeddings rather than centroid embeddings"
+  notes: |
+    This is an alternative approach to agglomerative clustering:
+
+    Instead of:
+      1. Compute cluster centroids (mean of all point embeddings)
+      2. Compute cosine similarity between centroids
+      3. Agglomerate based on centroid similarity
+
+    Use:
+      1. Generate cluster labels using LLM (title, description)
+      2. Embed the labels/descriptions using same embedding model
+      3. Compute cosine similarity between label embeddings
+      4. Agglomerate based on label similarity
+
+    Benefits:
+      - Labels capture semantic meaning explicitly
+      - More interpretable clustering decisions
+      - Can use longer descriptions for richer embeddings
+      - Avoids "averaging out" nuances in centroid approach
+
+    Drawbacks:
+      - Requires LLM call for each cluster first
+      - Labels may miss nuances present in raw embeddings
+      - Dependent on LLM label quality
+
+    Implementation:
+      1. Call labelAllClusters() to generate labels
+      2. Concatenate title + description for each cluster
+      3. Embed using same provider/model as original embeddings
+      4. Run agglomerative clustering on label embeddings

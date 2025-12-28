@@ -28,6 +28,7 @@ View and edit your data in a familiar spreadsheet interface:
 - **Sorting** - Sort by any column
 - **Filtering** - Query with operators: `=`, `!=`, `>`, `<`, `LIKE`, `IS NULL`, etc.
 - **Inline Editing** - Click any cell to edit
+- **Column Width Persistence** - Your column sizes are remembered
 
 ### 3. AI-Powered Column Augmentation
 
@@ -56,7 +57,7 @@ Add intelligent columns using AI models:
 - Max tokens limit
 - Web search configuration
 
-### 4. Web Search Augmentation (NEW)
+### 4. Web Search Augmentation
 
 Enhance AI responses with real-time web information:
 
@@ -106,17 +107,65 @@ Generate JSON responses validated against a schema:
 
 ### 7. Embedding Visualization
 
-Generate and visualize semantic embeddings:
+Generate and visualize semantic embeddings with advanced clustering and analysis tools:
 
-- **Composition Modes**:
-  - Single column
-  - Multiple columns with separator
-  - Full conversational context
-- **UMAP Reduction** - Project high-dimensional vectors to 2D
-- **Interactive Scatter Plot** - Click points to view trace details
-- **Persistent Layers** - Save embedding layers for comparison
+**Composition Modes**:
+- Single column embedding
+- Multiple columns with separator
+- Full conversational context (cross-row aggregation)
 
-### 8. Privacy-First Architecture
+**Two-Stage UMAP Projection**:
+- Stage 1: High-D → 15D (min_dist=0.0) for accurate clustering
+- Stage 2: High-D → 2D (min_dist=0.1) for visualization
+- Pre-computed k-nearest neighbors for fast search
+
+**Hybrid Clustering (HDBSCAN + K-Means)**:
+- HDBSCAN discovers natural cluster count (k) on 15D UMAP
+- K-Means tests k-range with silhouette scoring on original embeddings
+- L2-normalized embeddings for cosine-like distance in K-Means
+- 100% point assignment (no outliers)
+- Configurable parameters:
+  - UMAP Neighbors (15-100): Higher = more global structure
+  - Min Cluster Size (5-50): Minimum points to form a cluster
+  - Min Samples (1-15): Core point threshold for HDBSCAN
+
+**Interactive Visualization**:
+- **View Modes**: Points or Density contours
+- **Point Size Control**: Manual or automatic sizing
+- **Auto Cluster Labels**: Label dense regions automatically
+- **Re-clustering**: Adjust parameters and re-cluster on the fly
+- **Cluster Statistics**: View cluster count, sizes, and silhouette score
+- **State Persistence**: View settings saved per layer
+
+**Save Filter**:
+- Select points in the visualization
+- Save selections as reusable filters
+- Apply filters to spreadsheet view
+
+### 8. Cluster Analysis Console Tools
+
+Browser console tools (`window.clusterSim`) for advanced cluster exploration:
+
+**Similarity Analysis**:
+- Compute cosine similarity between cluster centroids
+- Find most similar clusters (top-k neighbors)
+- Discover all pairs above a similarity threshold
+- Get full pairwise similarity matrix
+
+**Agglomerative Clustering**:
+- Merge clusters into super-topics based on similarity
+- Three linkage methods: average, single, complete
+- Configurable similarity threshold
+
+**LLM-based Cluster Labeling**:
+- Generate semantic titles, labels, and descriptions
+- Sample conversations from clusters for context
+- Batch labeling with configurable concurrency
+- Cache results for repeated queries
+
+See [technical_docs.md](./technical_docs.md) for usage examples.
+
+### 9. Privacy-First Architecture
 
 - **All data stays in your browser** - DuckDB WASM database
 - **No server-side storage** - Files stored in IndexedDB
@@ -134,6 +183,7 @@ Transform raw agent logs into structured data for:
 - Quality evaluation (LLM-as-a-Judge)
 - A/B testing insights
 - Error pattern detection
+- Semantic cluster analysis
 
 ### AI Product Managers
 
@@ -142,6 +192,7 @@ Gain insights into:
 - Feature performance metrics
 - Conversation quality trends
 - Content categorization
+- Topic clustering
 
 ---
 
@@ -190,11 +241,18 @@ Gain insights into:
 ### Step 6: Visualize
 
 1. Open Embedding Wizard
-2. Select composition mode
+2. Select composition mode (Single/Multi/Cross-Row)
 3. Choose columns to embed
-4. Generate embeddings
-5. Explore interactive scatter plot
-6. Click points to view full traces
+4. Configure embedding provider (OpenAI, Cohere)
+5. Generate embeddings with automatic clustering
+6. Explore interactive scatter plot:
+   - Switch between Points and Density views
+   - Adjust point size
+   - Enable/disable auto cluster labels
+   - View cluster statistics
+   - Re-cluster with different parameters
+7. Click points to view full traces
+8. Save point selections as filters
 
 ---
 
@@ -287,6 +345,7 @@ FluffyViz works with standard agent log formats:
 - **Embedding generation**: Batch processing with progress tracking
 - **Model selection**: Some providers have rate limits on free tiers
 - **Web search**: Adds latency (~1-3 seconds per request)
+- **Clustering**: Hybrid approach uses HDBSCAN + K-Means for accurate results
 
 ---
 
@@ -303,10 +362,28 @@ FluffyViz is designed with privacy as a core principle:
 
 ---
 
+## Technical Highlights
+
+### Hybrid Clustering System
+FluffyViz uses a sophisticated two-stage clustering approach:
+1. **HDBSCAN on 15D UMAP**: Discovers natural cluster count without requiring k upfront
+2. **K-Means with Silhouette Scoring**: Tests k-range to find optimal clustering
+3. **100% Assignment**: Unlike pure HDBSCAN, all points are assigned to clusters
+
+This approach combines the best of density-based discovery with complete point assignment.
+
+### Memory-Optimized WASM
+FluffyViz manages multiple WASM modules (DuckDB, tiktoken, UMAP, embedding-atlas) carefully:
+- Tiktoken encoder freed before UMAP projection
+- UMAP memory cleared between clustering and visualization projections
+- Clustering coordinates stored in OPFS for efficient re-clustering
+
+---
+
 ## Use Cases
 
 ### Agent Quality Analysis
-Upload agent logs → Classify response quality → Aggregate by conversation → Identify patterns
+Upload agent logs → Classify response quality → Aggregate by conversation → Identify patterns → Visualize clusters
 
 ### Search-Augmented Responses
 Upload questions → Enable web search → Generate current answers → Verify with sources
@@ -318,10 +395,10 @@ Upload conversations → Translate to target language → Extract sentiment → 
 Upload traces → Classify error types → Generate summaries → Create debugging reports
 
 ### User Intent Mining
-Upload interactions → Extract keywords → Classify intents → Visualize clusters
+Upload interactions → Extract keywords → Classify intents → Visualize semantic clusters
 
 ### Performance Benchmarking
-Upload runs → Generate embeddings → Visualize semantic similarity → Compare model outputs
+Upload runs → Generate embeddings → Visualize semantic similarity → Compare model outputs → Analyze clusters
 
 ---
 
@@ -345,6 +422,12 @@ A: When enabled, the AI provider searches the web before generating a response. 
 **Q: Which providers support web search?**
 A: OpenAI (via Responses API), Perplexity (built-in), and Google (search grounding).
 
+**Q: How does clustering work?**
+A: FluffyViz uses a hybrid approach: (1) HDBSCAN on 15D UMAP discovers the natural cluster count (k), (2) K-Means tests k in a range [k-2, k+5] using silhouette scoring to find the optimal k, (3) Final K-Means assigns all points to clusters. This gives 100% assignment with no outliers while using density-based discovery for the cluster count.
+
+**Q: What are the console tools for?**
+A: The `window.clusterSim` console tools enable advanced cluster analysis: compute similarity between clusters, build hierarchical super-topics via agglomerative clustering, and generate LLM-based labels for clusters. These are experimental features for power users.
+
 ---
 
 ## Known Issues
@@ -358,15 +441,120 @@ See [PROVIDER_CONFIG.md](./PROVIDER_CONFIG.md) for details.
 
 ---
 
+## Console Tools for Cluster Analysis
+
+FluffyViz provides browser console tools (`window.clusterSim`) for advanced cluster exploration, hierarchical organization, and LLM-based labeling. Access via the browser's Developer Console (F12).
+
+### Getting Started
+
+```javascript
+// Get layer ID from the embedding visualization URL or console log
+const layerId = 'emb_xxxxx';
+
+// Basic similarity analysis
+await clusterSim.similarity(layerId, 9, 13)     // Compare two clusters
+await clusterSim.neighbors(layerId, 9)          // Find similar clusters
+await clusterSim.findSimilar(layerId, 0.85)     // Pairs above threshold
+```
+
+### Available Tools
+
+| Category | Tool | Purpose |
+|----------|------|---------|
+| **Similarity** | `similarity(layerId, clusterA, clusterB)` | Cosine similarity between centroids |
+| | `neighbors(layerId, clusterId, topK?)` | Top-k most similar clusters |
+| | `findSimilar(layerId, threshold)` | All pairs above threshold |
+| | `allSimilarities(layerId)` | Full pairwise similarity matrix |
+| **Hierarchy** | `agglomerate(layerId, threshold, linkage?)` | Build super-topics via agglomerative clustering |
+| **Labeling** | `labelCluster(layerId, clusterId, options?)` | Generate LLM label for one cluster |
+| | `labelAllClusters(layerId, options?)` | Label all clusters in parallel |
+| **Cache** | `clearCache()` | Clear centroid cache |
+| | `clearLabelCache()` | Clear LLM label cache |
+| | `getCachedLabels()` | Retrieve cached labels |
+
+### Agglomerative Clustering
+
+Merge semantically similar clusters into super-topics:
+
+```javascript
+// Three linkage methods available:
+await clusterSim.agglomerate(layerId, 0.80)                   // average (default)
+await clusterSim.agglomerate(layerId, 0.80, 'single')         // single linkage
+await clusterSim.agglomerate(layerId, 0.80, 'complete')       // complete linkage
+```
+
+**Linkage Methods:**
+- **Average**: Uses mean similarity between all pairs (balanced approach)
+- **Single**: Uses maximum similarity (closest pair) → tends to chain clusters
+- **Complete**: Uses minimum similarity (furthest pair) → creates compact clusters
+
+### LLM Cluster Labeling
+
+Generate semantic metadata for clusters using an LLM:
+
+```javascript
+// Label a single cluster
+await clusterSim.labelCluster(layerId, 9)
+await clusterSim.labelCluster(layerId, 9, { modelId: 'gpt-4o' })
+
+// Label all clusters with concurrency control
+await clusterSim.labelAllClusters(layerId)
+await clusterSim.labelAllClusters(layerId, { concurrency: 5, modelId: 'gpt-4o' })
+```
+
+**Output format:**
+```json
+{
+  "clusterId": 9,
+  "title": "Python Debugging Requests",
+  "labels": ["coding", "python", "troubleshooting", "debugging"],
+  "description": "Users seeking help with Python errors, exceptions, and debugging techniques."
+}
+```
+
+### Experimental Approaches
+
+These tools enable exploration of different strategies for organizing clusters:
+
+#### A. Embedding Agglomerative Clustering (Implemented)
+Merge clusters based on **centroid embedding similarity** using hierarchical agglomeration.
+
+#### B. Label Embedding Clustering (Planned)
+Alternative approach: cluster on **LLM-generated label embeddings** instead of centroids.
+More interpretable but requires LLM calls for each cluster first.
+
+#### C. LLM Validation Pass (Planned)
+After agglomerative clustering, have LLM validate each super-topic:
+- Semantic coherence scoring
+- Intent alignment evaluation
+- Suggestions for splitting or reassigning
+
+#### D. Manual Merge in UI (Planned)
+Interactive cluster merging in the visualization interface.
+
+See [technical_docs.md](./technical_docs.md) for implementation details.
+
+---
+
 ## Roadmap
 
+### Recently Completed
+- ✅ Hybrid clustering with HDBSCAN + K-Means
+- ✅ Two-stage UMAP for clustering and visualization
+- ✅ Re-clustering with parameter tuning
+- ✅ Cluster labeling with LLM (console tools)
+- ✅ Agglomerative super-topics with linkage options
+- ✅ Silhouette scoring for cluster quality
+
 ### Current Focus
-- Web search augmentation with sources
-- Enhanced prompt editor with variable pills
-- Improved error handling and retry mechanisms
+- Cluster labeling UI integration
+- Super-topic validation with LLM
+- Export functionality (CSV, JSON, Parquet)
 
 ### Future Plans
-- Export functionality (CSV, JSON, Parquet)
+- Label embedding clustering (alternative hierarchy approach)
+- Manual cluster merge UI
+- Cluster coherence evaluation
 - Web Worker support for large files
 - Virtual scrolling for 10k+ row datasets
 - OAuth integration for providers
@@ -388,7 +576,7 @@ FluffyViz empowers AI/ML teams to quickly analyze and augment their agent data:
 
 - **Parse** any format with auto-detection
 - **Augment** with 10+ AI providers and web search
-- **Visualize** patterns with embedding clusters
+- **Visualize** patterns with hybrid clustering and interactive scatter plots
 
 All without:
 - Writing custom scripts

@@ -12,10 +12,11 @@
  */
 
 import { HDBSCAN } from 'hdbscan-ts';
+import { findOptimalK, normalizeEmbeddings, computeKMeansStats } from './kmeans';
 
 export interface ClusterConfig {
   minClusterSize: number;  // Minimum points to form a cluster (default: 10)
-  minSamples: number;      // Core point threshold (default: 5)
+  minSamples: number;      // Core point threshold (default: 3)
   nNeighbors: number;      // UMAP n_neighbors for clustering projection (default: 30)
 }
 
@@ -29,7 +30,7 @@ export interface ClusterResult {
 
 export const DEFAULT_CLUSTER_CONFIG: ClusterConfig = {
   minClusterSize: 10,  // Reasonable default for most datasets
-  minSamples: 5,       // Core point threshold
+  minSamples: 3,       // Core point threshold (lower = fewer outliers)
   nNeighbors: 30,      // UMAP neighborhood size for clustering
 };
 
@@ -166,6 +167,134 @@ export function getClusterColor(clusterId: number, colors: string[]): string {
 }
 
 // ============================================================================
+// HYBRID CLUSTERING: HDBSCAN → K-Means
+// ============================================================================
+
+export interface HybridClusterResult {
+  labels: number[];                    // Cluster ID per point (0 to k-1, no -1 outliers)
+  clusterCount: number;                // Number of clusters
+  clusterSizes: Map<number, number>;   // Cluster ID → point count
+  kEstimate: number;                   // k discovered by HDBSCAN
+  optimalK: number;                    // k selected by silhouette score
+  silhouetteScore: number;             // Best silhouette score
+  method: 'hybrid';                    // Clustering method identifier
+}
+
+/**
+ * Hybrid clustering: HDBSCAN for k discovery, K-Means for final assignment
+ *
+ * Pipeline:
+ * 1. DISCOVER k: Run HDBSCAN on 15D UMAP to find natural cluster count
+ * 2. OPTIMIZE k: Test K-Means on original embeddings with k in [k_estimate - 2, k_estimate + 5]
+ * 3. SELECT k: Pick k with highest silhouette score
+ * 4. ASSIGN: Final K-Means clustering (100% assignment, no outliers)
+ *
+ * @param umapCoords15D - 15D UMAP coordinates for HDBSCAN k-discovery
+ * @param originalEmbeddings - Original high-D embeddings for K-Means clustering
+ * @param config - HDBSCAN configuration for k-discovery
+ * @returns Hybrid clustering result with 100% point assignment
+ */
+export async function hybridCluster(
+  umapCoords15D: number[][],
+  originalEmbeddings: number[][],
+  config: ClusterConfig = DEFAULT_CLUSTER_CONFIG
+): Promise<HybridClusterResult> {
+  const n = originalEmbeddings.length;
+
+  if (n === 0) {
+    return {
+      labels: [],
+      clusterCount: 0,
+      clusterSizes: new Map(),
+      kEstimate: 0,
+      optimalK: 0,
+      silhouetteScore: 0,
+      method: 'hybrid',
+    };
+  }
+
+  console.log(`[Hybrid Clustering] Starting pipeline for ${n} points`);
+  const startTime = performance.now();
+
+  // =========================================================================
+  // Stage 1: DISCOVER k using HDBSCAN on 15D UMAP
+  // =========================================================================
+  console.log('[Hybrid Clustering] Stage 1: HDBSCAN k-discovery on 15D UMAP');
+
+  const hdbscanResult = await clusterEmbeddings(umapCoords15D, config);
+  const kEstimate = hdbscanResult.clusterCount;
+
+  console.log(`[Hybrid Clustering] HDBSCAN found ${kEstimate} clusters (${hdbscanResult.noisePercentage.toFixed(1)}% noise)`);
+
+  // Handle edge cases
+  if (kEstimate < 2) {
+    console.log('[Hybrid Clustering] HDBSCAN found < 2 clusters, defaulting to k=2');
+  }
+
+  // =========================================================================
+  // Stage 2: OPTIMIZE k using silhouette score on original embeddings
+  // =========================================================================
+  console.log('[Hybrid Clustering] Stage 2: K-Means optimization on original embeddings');
+
+  // L2-normalize embeddings for cosine-like distance
+  console.log('[Hybrid Clustering] L2-normalizing embeddings...');
+  const normalizedEmbeddings = normalizeEmbeddings(originalEmbeddings);
+
+  // Define k range: [k_estimate - 2, k_estimate + 5]
+  const kMin = Math.max(2, kEstimate - 2);
+  const kMax = Math.max(kMin + 1, kEstimate + 5);
+
+  console.log(`[Hybrid Clustering] Testing k in range [${kMin}, ${kMax}]`);
+
+  const { optimalK, scores, labels } = findOptimalK(normalizedEmbeddings, kMin, kMax);
+  const silhouetteScore = scores.get(optimalK) || 0;
+
+  // =========================================================================
+  // Compute final statistics
+  // =========================================================================
+  const { clusterCount, clusterSizes } = computeKMeansStats(labels);
+
+  const elapsed = performance.now() - startTime;
+  console.log(`[Hybrid Clustering] Complete in ${elapsed.toFixed(0)}ms`);
+  console.log(`[Hybrid Clustering] Final: k=${optimalK}, silhouette=${silhouetteScore.toFixed(4)}`);
+  console.log(`[Hybrid Clustering] Cluster sizes:`, Array.from(clusterSizes.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([id, size]) => `#${id}: ${size}`)
+    .join(', '));
+
+  return {
+    labels,
+    clusterCount,
+    clusterSizes,
+    kEstimate,
+    optimalK,
+    silhouetteScore,
+    method: 'hybrid',
+  };
+}
+
+/**
+ * Re-cluster with hybrid approach
+ *
+ * For re-clustering, we need both 15D UMAP coords (for k-discovery) and
+ * original embeddings (for K-Means). If embeddings aren't available,
+ * falls back to HDBSCAN-only on 15D coords.
+ */
+export async function hybridRecluster(
+  umapCoords15D: number[][],
+  originalEmbeddings: number[][] | null,
+  config: ClusterConfig
+): Promise<HybridClusterResult | ClusterResult> {
+  if (!originalEmbeddings || originalEmbeddings.length !== umapCoords15D.length) {
+    console.log('[Hybrid Clustering] No embeddings available, falling back to HDBSCAN');
+    return clusterEmbeddings(umapCoords15D, config);
+  }
+
+  return hybridCluster(umapCoords15D, originalEmbeddings, config);
+}
+
+// ============================================================================
 // DEPRECATED APPROACHES (kept for reference)
 // ============================================================================
 //
@@ -178,8 +307,14 @@ export function getClusterColor(clusterId: number, colors: string[]): string {
 //    - Clustered on 2D UMAP visualization coordinates
 //    - Works but loses semantic information in the 2D projection
 //
-// Current approach (two-stage UMAP):
+// 3. HDBSCAN-only (previous approach):
 //    - Stage 1: UMAP 3072D → 15D with min_dist=0.0 (for clustering)
 //    - Stage 2: UMAP 3072D → 2D with min_dist=0.1 (for visualization)
 //    - HDBSCAN runs on 15D intermediate space
-//    - Best of both worlds: semantic clustering + clear visualization
+//    - Problem: 50%+ outliers, not all points assigned
+//
+// Current approach (hybrid HDBSCAN → K-Means):
+//    - HDBSCAN on 15D UMAP discovers natural cluster count (k)
+//    - K-Means on original embeddings tests k-range with silhouette
+//    - Final K-Means assigns 100% of points (no outliers)
+//    - Best of both worlds: density-based discovery + full assignment

@@ -10,11 +10,11 @@ A local-first web application for AI/ML engineers to parse, augment, and visuali
 │                                                                              │
 │     ┌──────────┐      ┌──────────┐      ┌──────────┐      ┌──────────┐     │
 │     │  Upload  │ ──▶  │  Parse   │ ──▶  │ Augment  │ ──▶  │Visualize │     │
-│     │  Files   │      │  & Edit  │      │  with AI │      │  Embed   │     │
+│     │  Files   │      │  & Edit  │      │  with AI │      │ Clusters │     │
 │     └──────────┘      └──────────┘      └──────────┘      └──────────┘     │
 │                                                                              │
-│     JSONL/JSON/CSV    Spreadsheet       LLM Columns      Embedding Atlas    │
-│     Auto-detect       Sort/Filter       Web Search       2D UMAP Scatter    │
+│     JSONL/JSON/CSV    Spreadsheet       LLM Columns      Hybrid Clustering  │
+│     Auto-detect       Sort/Filter       Web Search       HDBSCAN + K-Means  │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -67,7 +67,7 @@ A local-first web application for AI/ML engineers to parse, augment, and visuali
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Web Search Augmentation (NEW)
+### Web Search Augmentation
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                   Web Search Integration                         │
@@ -89,23 +89,36 @@ A local-first web application for AI/ML engineers to parse, augment, and visuali
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Embedding Visualization
+### Embedding Visualization with Hybrid Clustering
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                    Embedding Pipeline                            │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
-│   Select Columns    Generate Vectors     UMAP → 2D              │
-│        │                  │                  │                   │
-│        ▼                  ▼                  ▼                   │
+│   Select Columns    Generate Vectors     Hybrid Clustering       │
+│        │                  │                    │                 │
+│        ▼                  ▼                    ▼                 │
 │   ┌─────────┐        ┌─────────┐        ┌─────────────────┐     │
-│   │ Single  │        │ Batch   │        │                 │     │
-│   │ Multi   │───────▶│ Embed   │───────▶│  ● ●    ●      │     │
-│   │ History │        │ API     │        │    ●  ●   ●    │     │
-│   └─────────┘        └─────────┘        │  ●    ●  ● ●   │     │
+│   │ Single  │        │ Batch   │        │  HDBSCAN → k    │     │
+│   │ Multi   │───────▶│ Embed   │───────▶│  K-Means + sil  │     │
+│   │ History │        │ API     │        │  100% assigned  │     │
+│   └─────────┘        └─────────┘        └─────────────────┘     │
+│                                                 │                │
+│                                                 ▼                │
+│                                          ┌─────────────────┐     │
+│                                          │                 │     │
+│                                          │  ● ●    ●      │     │
+│                                          │    ●  ●   ●    │     │
+│                                          │  ●    ●  ● ●   │     │
 │                                          │    Interactive  │     │
 │                                          │    Scatter Plot │     │
 │                                          └─────────────────┘     │
+│                                                                  │
+│   Features:                                                      │
+│   • Points / Density view modes                                  │
+│   • Auto cluster labels                                         │
+│   • Re-cluster with parameter tuning                            │
+│   • Save selections as filters                                  │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -139,7 +152,7 @@ A local-first web application for AI/ML engineers to parse, augment, and visuali
 │  │                        AI Integration                                │    │
 │  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐  │    │
 │  │  │  Vercel AI SDK   │  │   Web Search     │  │    Embedding     │  │    │
-│  │  │  (10+ providers) │  │   + Sources      │  │  UMAP Pipeline   │  │    │
+│  │  │  (10+ providers) │  │   + Sources      │  │  UMAP + Cluster  │  │    │
 │  │  └──────────────────┘  └──────────────────┘  └──────────────────┘  │    │
 │  └─────────────────────────────────────────────────────────────────────┘    │
 │                                                                              │
@@ -204,16 +217,51 @@ See `provider-config.example.json` for full template.
   │ Drag & Drop     │    │ Add AI Column   │    │ Embedding       │
   │ Format Detect   │───▶│ Configure Model │───▶│ Wizard          │
   │ Preview Data    │    │ Map Variables   │    │ UMAP Projection │
-  │ Store in DuckDB │    │ Generate + Save │    │ Interactive Plot│
+  │ Store in DuckDB │    │ Generate + Save │    │ Hybrid Cluster  │
   └─────────────────┘    └─────────────────┘    └─────────────────┘
            │                      │                      │
            │                      │                      │
            ▼                      ▼                      ▼
   ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
   │  Spreadsheet    │    │  AI Response    │    │  Scatter Plot   │
-  │  View & Edit    │    │  + Sources Col  │    │  Point Details  │
-  │  Sort & Filter  │    │  Cell Metadata  │    │  Cluster View   │
+  │  View & Edit    │    │  + Sources Col  │    │  Points/Density │
+  │  Sort & Filter  │    │  Cell Metadata  │    │  Re-cluster     │
   └─────────────────┘    └─────────────────┘    └─────────────────┘
+```
+
+## Clustering System
+
+FluffyViz uses a **hybrid HDBSCAN + K-Means** approach for embedding clustering:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         Hybrid Clustering Pipeline                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  Stage 1: HDBSCAN k-discovery                                               │
+│  ┌──────────────────────────────────────────────────────────────────────┐   │
+│  │  • Run HDBSCAN on 15D UMAP projection (min_dist=0.0)                 │   │
+│  │  • Discover natural cluster count (k_estimate)                        │   │
+│  │  • No need to specify k upfront                                       │   │
+│  └──────────────────────────────────────────────────────────────────────┘   │
+│                                    │                                         │
+│                                    ▼                                         │
+│  Stage 2: K-Means optimization                                              │
+│  ┌──────────────────────────────────────────────────────────────────────┐   │
+│  │  • L2-normalize original embeddings                                   │   │
+│  │  • Test k in range [k_estimate - 2, k_estimate + 5]                  │   │
+│  │  • Select k with highest silhouette score                            │   │
+│  └──────────────────────────────────────────────────────────────────────┘   │
+│                                    │                                         │
+│                                    ▼                                         │
+│  Result: 100% point assignment                                              │
+│  ┌──────────────────────────────────────────────────────────────────────┐   │
+│  │  • All points assigned to clusters (no outliers)                     │   │
+│  │  • Silhouette score validates cluster quality                        │   │
+│  │  • Re-cluster anytime with new parameters                            │   │
+│  └──────────────────────────────────────────────────────────────────────┘   │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Provider Support
@@ -254,16 +302,23 @@ fluffy-viz/
 │   │   ├── spreadsheet/          # Data editing
 │   │   │   ├── SpreadsheetEditor.tsx
 │   │   │   ├── AddColumnModal.tsx
-│   │   │   ├── GenerationSettings.tsx  # NEW
+│   │   │   ├── GenerationSettings.tsx
 │   │   │   └── PromptComposer.tsx
 │   │   ├── embedding-viewer/     # Visualization
+│   │   │   ├── embedding-wizard.tsx
+│   │   │   ├── embedding-visualization.tsx
+│   │   │   └── agent-trace-viewer.tsx
 │   │   └── ui/                   # shadcn components
 │   │
 │   ├── lib/
 │   │   ├── ai-inference.ts       # LLM + web search
 │   │   ├── format-parser.ts      # Data parsing
 │   │   ├── duckdb/               # Database layer
-│   │   └── embedding/            # UMAP pipeline
+│   │   └── embedding/            # UMAP + clustering
+│   │       ├── clustering.ts     # Hybrid HDBSCAN + K-Means
+│   │       ├── kmeans.ts         # K-Means with silhouette
+│   │       ├── cluster-similarity.ts # Console tools for analysis
+│   │       └── umap-reducer.ts   # Two-stage UMAP
 │   │
 │   ├── config/
 │   │   ├── models/model-registry.yaml  # Model definitions
@@ -272,7 +327,8 @@ fluffy-viz/
 │   │
 │   └── types/
 │       ├── models.ts             # AI model types
-│       └── web-search.ts         # Search config types  # NEW
+│       ├── embedding.ts          # Embedding & cluster types
+│       └── web-search.ts         # Search config types
 │
 ├── CLAUDE.md                     # AI assistant context
 ├── PROVIDER_CONFIG.md            # Provider setup guide
@@ -326,6 +382,31 @@ npm run lint
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
+## Console Tools for Cluster Analysis
+
+FluffyViz provides browser console tools (`window.clusterSim`) for advanced cluster analysis:
+
+```javascript
+// Access via browser Developer Console (F12)
+const layerId = 'emb_xxxxx';  // Get from visualization URL
+
+// Similarity analysis
+await clusterSim.similarity(layerId, 9, 13)    // Compare two clusters
+await clusterSim.neighbors(layerId, 9)          // Find similar clusters
+await clusterSim.findSimilar(layerId, 0.85)    // Pairs above threshold
+
+// Agglomerative clustering
+await clusterSim.agglomerate(layerId, 0.80)             // average linkage
+await clusterSim.agglomerate(layerId, 0.80, 'single')   // single linkage
+await clusterSim.agglomerate(layerId, 0.80, 'complete') // complete linkage
+
+// LLM-based labeling
+await clusterSim.labelCluster(layerId, 9)       // Label single cluster
+await clusterSim.labelAllClusters(layerId)      // Label all clusters
+```
+
+See [technical_docs.md](./technical_docs.md) for full documentation.
+
 ## Known Issues
 
 - **OpenAI Search-Preview Models**: `gpt-4o-search-preview` and similar models don't work due to an AI SDK bug parsing the `annotations` field. Use Responses API models with `web_search_preview` tool instead.
@@ -339,6 +420,7 @@ npm run lint
 | Styling | Tailwind CSS v4, shadcn/ui |
 | Database | DuckDB WASM (browser-side SQL) |
 | AI | Vercel AI SDK, 10+ provider integrations |
+| Clustering | HDBSCAN-ts, ml-kmeans, silhouette scoring |
 | Visualization | Embedding Atlas, UMAP-js |
 
 ## Contributing

@@ -53,13 +53,13 @@ export interface EmbeddingPoint {
 // Clustering configuration
 export interface ClusterConfig {
   minClusterSize: number;  // Minimum points to form a cluster (default: 10, range: 5-50)
-  minSamples: number;      // Core point threshold (default: 5, range: 1-15)
+  minSamples: number;      // Core point threshold (default: 3, range: 1-15)
   nNeighbors: number;      // UMAP n_neighbors for clustering projection (default: 30, range: 15-100)
 }
 
 export const DEFAULT_CLUSTER_CONFIG: ClusterConfig = {
   minClusterSize: 10,  // Reasonable default for most datasets
-  minSamples: 5,       // Core point threshold
+  minSamples: 3,       // Core point threshold (lower = fewer outliers)
   nNeighbors: 30,      // UMAP neighborhood size for clustering
 };
 

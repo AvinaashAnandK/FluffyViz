@@ -21,7 +21,7 @@ import { computeKNN } from '@/lib/embedding/knn';
 import { getAllFileRows, getFileRowCount } from '@/lib/duckdb';
 import { Download, Loader2, Filter } from 'lucide-react';
 import { loadProviderSettings, getProviderApiKey, type ProviderKey } from '@/config/provider-settings';
-import { clusterEmbeddings } from '@/lib/embedding/clustering';
+import { hybridCluster } from '@/lib/embedding/clustering';
 import { saveClusteringCoordinates } from '@/lib/embedding/clustering-coords-storage';
 import type { ClusterConfig, ClusterStats } from '@/types/embedding';
 
@@ -193,11 +193,13 @@ export function AgentTraceViewer({ fileId, data, onDataUpdate }: AgentTraceViewe
         nNeighbors
       );
 
-      // Step 6: Cluster on intermediate UMAP coordinates (15D)
-      // HDBSCAN works well here because UMAP with min_dist=0 creates tight density gradients
-      console.log('[Embedding Generation] Clustering on 15D UMAP coordinates...');
+      // Step 6: HYBRID CLUSTERING (HDBSCAN → K-Means)
+      // 1. HDBSCAN on 15D UMAP discovers natural cluster count (k)
+      // 2. K-Means on original embeddings tests k-range with silhouette score
+      // 3. Final K-Means assigns 100% of points (no outliers)
+      console.log('[Embedding Generation] Running hybrid clustering...');
       const clusterConfig: ClusterConfig = state.clusterConfig;
-      const clusterResult = await clusterEmbeddings(clusteringCoords, clusterConfig);
+      const clusterResult = await hybridCluster(clusteringCoords, embeddings, clusterConfig);
 
       // Clear WASM memory before second UMAP to avoid memory accumulation
       // This is critical: running two UMAP operations without clearing can cause
@@ -227,10 +229,11 @@ export function AgentTraceViewer({ fileId, data, onDataUpdate }: AgentTraceViewe
       }));
 
       // Prepare cluster stats for storage
+      // Note: Hybrid clustering uses K-Means which has no noise/outliers
       const clusterStats: ClusterStats = {
         clusterCount: clusterResult.clusterCount,
-        noiseCount: clusterResult.noiseCount,
-        noisePercentage: clusterResult.noisePercentage,
+        noiseCount: 0, // K-Means assigns all points
+        noisePercentage: 0,
         clusterSizes: Object.fromEntries(clusterResult.clusterSizes),
       };
 
