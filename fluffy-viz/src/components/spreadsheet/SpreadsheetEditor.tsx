@@ -76,6 +76,7 @@ export interface Column {
   webSearch?: WebSearchConfig
   isAIGenerated?: boolean
   outputSchema?: OutputSchema
+  hfProviderId?: string  // HuggingFace inference provider ID (e.g., 'groq', 'together')
   metadata?: {
     prompt?: string
     provider?: string
@@ -122,6 +123,7 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
   const [totalRows, setTotalRows] = useState(0)
   const [sortColumn, setSortColumn] = useState<string | null>(null)
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc' | null>(null)
+  const [dataRefreshCounter, setDataRefreshCounter] = useState(0) // Increment to force data refresh
 
   // Filter state
   const [filters, setFilters] = useState<FilterRule[]>([])
@@ -284,6 +286,7 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
                   columnType: meta?.columnType,
                   isAIGenerated: meta?.columnType === 'ai-generated',
                   outputSchema: meta?.outputSchema as OutputSchema | undefined,
+                  hfProviderId: meta?.hfProviderId,
                   metadata: meta ? {
                     prompt: meta.prompt,
                     provider: meta.provider,
@@ -308,6 +311,7 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
                     visible: true,
                     columnType: meta?.columnType,
                     isAIGenerated: meta?.columnType === 'ai-generated',
+                    hfProviderId: meta?.hfProviderId,
                     metadata: meta ? {
                       prompt: meta.prompt,
                       provider: meta.provider,
@@ -328,7 +332,7 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
     }
 
     loadFileData()
-  }, [fileId, getFile, currentPage, pageSize, sortColumn, sortDirection, filters, savedFilterRowIndices])
+  }, [fileId, getFile, currentPage, pageSize, sortColumn, sortDirection, filters, savedFilterRowIndices, dataRefreshCounter])
 
   // Load saved filters (also refresh when switching back to spreadsheet tab)
   useEffect(() => {
@@ -386,6 +390,7 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
     outputSchema?: OutputSchema
     temperature?: number
     maxTokens?: number
+    hfProviderId?: string  // HuggingFace inference provider ID
   }) => {
     // Check for duplicate column name
     const existingColumnMeta = await getAllColumnMetadata(fileId)
@@ -414,6 +419,7 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
       prompt: columnData.prompt,
       webSearch: columnData.webSearch,
       outputSchema: columnData.outputSchema,
+      hfProviderId: columnData.hfProviderId,  // HuggingFace inference provider
       metadata: {
         prompt: columnData.prompt,
         provider: columnData.provider.id,
@@ -489,7 +495,8 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
         provider: isConvHistory ? undefined : columnData.provider.id,
         prompt: columnData.prompt,
         createdAt: Date.now(),
-        outputSchema: columnData.outputSchema
+        outputSchema: columnData.outputSchema,
+        hfProviderId: columnData.hfProviderId,  // HuggingFace inference provider
       })
       console.log(`[SpreadsheetEditor] Column metadata saved for ${newColumn.id}`)
 
@@ -553,6 +560,18 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
         // Add column to DuckDB with appropriate type
         await addColumnToDuckDB(fileId, fieldColumnId, duckDbType, null)
 
+        // Save metadata for the expanded field column so name persists on refresh
+        await saveColumnMetadata({
+          fileId,
+          columnId: fieldColumnId,
+          columnName: fieldColumnName,  // Save user-friendly name
+          columnType: 'ai-generated',
+          model: typeof jsonColumn.model === 'string' ? jsonColumn.model : jsonColumn.model?.id,
+          provider: typeof jsonColumn.provider === 'string' ? jsonColumn.provider : jsonColumn.provider?.id,
+          createdAt: Date.now(),
+        })
+        console.log(`[SpreadsheetEditor] Field column metadata saved for ${fieldColumnId}`)
+
         // Create column object
         const fieldColumn: Column = {
           id: fieldColumnId,
@@ -561,6 +580,7 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
           model: jsonColumn.model,
           provider: jsonColumn.provider,
           visible: true,
+          columnType: 'ai-generated',
         }
 
         fieldColumns.push(fieldColumn)
@@ -612,9 +632,9 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
       // Update in-memory columns state
       setColumns(prev => [...prev, ...fieldColumns])
 
-      // Trigger data refresh by forcing page update (useEffect will re-fetch)
-      // Note: The column updates are already in DuckDB, so next query will include them
-      setCurrentPage(prev => prev)
+      // Trigger data refresh by incrementing refresh counter
+      // This forces the useEffect to re-fetch data from DuckDB with the new column values
+      setDataRefreshCounter(prev => prev + 1)
 
       // If expansionMode is 'expanded' (not 'both'), remove the JSON column
       if (expansionMode === 'expanded') {
@@ -641,6 +661,7 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
       outputSchema?: OutputSchema
       temperature?: number
       maxTokens?: number
+      hfProviderId?: string  // HuggingFace inference provider ID
     }
   ) => {
     setGeneratingColumn(column.id)
@@ -811,7 +832,8 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
           }
         },
         columnData.outputSchema,
-        columnData.webSearch
+        columnData.webSearch,
+        columnData.hfProviderId  // HuggingFace inference provider ID
       )
 
       // Persist to DuckDB after all generation is complete
@@ -1226,6 +1248,8 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
       // Ensure we have model and provider - prioritize options, then column
       const modelToUse: Model | undefined = options.model || column.model
       const providerToUse: ModelProvider | undefined = options.provider || column.provider
+      // For HuggingFace, get the inference provider ID
+      const hfProviderIdToUse: string | undefined = options.hfProviderId || column.hfProviderId
 
       // If still undefined, show error
       if (!modelToUse || !providerToUse) {
@@ -1245,13 +1269,14 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
           model: options.model.id,
           provider: options.provider.id,
           prompt: column.prompt,
-          createdAt: Date.now()
+          createdAt: Date.now(),
+          hfProviderId: options.hfProviderId,  // Save HuggingFace inference provider ID
         })
 
         // Update in-memory column data
         setColumns(prev => prev.map(col =>
           col.id === columnId
-            ? { ...col, model: options.model, provider: options.provider }
+            ? { ...col, model: options.model, provider: options.provider, hfProviderId: options.hfProviderId }
             : col
         ))
       }
@@ -1311,7 +1336,9 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
             console.error('Failed to update cell:', err)
           )
         },
-        column.outputSchema
+        column.outputSchema,
+        undefined,  // webSearch - preserve from column if needed
+        hfProviderIdToUse  // HuggingFace inference provider ID
       )
 
       // Success toast
@@ -1844,6 +1871,7 @@ export function SpreadsheetEditor({ fileId }: SpreadsheetEditorProps) {
                   }
                   currentModel={selectedRetryColumn.model}
                   currentProvider={selectedRetryColumn.provider}
+                  hfProviderId={selectedRetryColumn.hfProviderId}
                 />
               )
             })()}

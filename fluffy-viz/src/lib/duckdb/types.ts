@@ -139,6 +139,7 @@ export interface ColumnMetadata {
   temperature?: number;         // Generation temperature
   maxTokens?: number;           // Max tokens for generation
   width?: number;               // Column width in pixels for spreadsheet display
+  hfProviderId?: string;        // HuggingFace inference provider ID (e.g., 'groq', 'together')
 }
 
 /**

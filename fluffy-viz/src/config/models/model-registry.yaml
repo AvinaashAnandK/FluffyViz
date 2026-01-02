@@ -873,94 +873,12 @@ together:
 
   embedding: []
 
+# ==========================================================================
+# HuggingFace models are loaded dynamically from the HuggingFace Hub API
+# See: /api/huggingface/models for the dynamic model search endpoint
+# This enables access to 1000s of models via HF Inference Providers
+# (Groq, Together, Nebius, Cerebras, etc.)
+# ==========================================================================
 huggingface:
-  text:
-    # Recommended instruction-following models
-    - id: meta-llama/Llama-3.1-8B-Instruct
-      name: Llama 3.1 8B Instruct
-      type: text
-      searchSupport: false
-      contextWindow: 128000
-      maxOutputTokens: 4096
-      description: General Q&A and sentiment analysis
-      recommended: true
-
-    - id: mistralai/Mixtral-8x7B-Instruct-v0.1
-      name: Mixtral 8x7B Instruct
-      type: text
-      searchSupport: false
-      contextWindow: 32768
-      maxOutputTokens: 4096
-      description: Complex NLP, translation
-      recommended: true
-
-    - id: Qwen/Qwen2.5-72B-Instruct
-      name: Qwen 2.5 72B Instruct
-      type: text
-      searchSupport: false
-      contextWindow: 131072
-      maxOutputTokens: 4096
-      description: Multilingual (29+ languages)
-      recommended: true
-
-    - id: Qwen/Qwen2.5-Coder-32B-Instruct
-      name: Qwen 2.5 Coder 32B
-      type: text
-      searchSupport: false
-      contextWindow: 131072
-      maxOutputTokens: 4096
-      description: Code generation and reasoning
-      recommended: true
-
-    - id: mistralai/Mistral-Nemo-Instruct-2407
-      name: Mistral Nemo 12B
-      type: text
-      searchSupport: false
-      contextWindow: 128000
-      maxOutputTokens: 4096
-      description: Real-time dialogue
-      recommended: false
-
-  embedding:
-    # Top MTEB leaderboard models
-    - id: nvidia/NV-Embed-v2
-      name: NV-Embed v2
-      type: embedding
-      dimensions: 4096
-      description: MTEB #1 (72.31 score), generalist
-      recommended: true
-
-    - id: BAAI/bge-large-en-v1.5
-      name: BGE Large EN v1.5
-      type: embedding
-      dimensions: 1024
-      description: Excellent for English RAG
-      recommended: true
-
-    - id: BAAI/bge-base-en-v1.5
-      name: BGE Base EN v1.5
-      type: embedding
-      dimensions: 768
-      description: Balanced performance/speed
-      recommended: true
-
-    - id: BAAI/bge-m3
-      name: BGE M3
-      type: embedding
-      dimensions: 1024
-      description: Multilingual support
-      recommended: true
-
-    - id: sentence-transformers/all-mpnet-base-v2
-      name: All MPNet Base v2
-      type: embedding
-      dimensions: 768
-      description: General purpose embeddings
-      recommended: false
-
-    - id: sentence-transformers/all-MiniLM-L6-v2
-      name: All MiniLM L6 v2
-      type: embedding
-      dimensions: 384
-      description: Fast and lightweight
-      recommended: false
+  text: []
+  embedding: []

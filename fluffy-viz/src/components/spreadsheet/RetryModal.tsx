@@ -51,6 +51,8 @@ export interface RetryModalProps {
   temperature?: number;
   /** Original maxTokens setting */
   maxTokens?: number;
+  /** HuggingFace inference provider ID (e.g., 'groq', 'together') */
+  hfProviderId?: string;
 }
 
 export interface RetryOptions {
@@ -64,6 +66,8 @@ export interface RetryOptions {
   webSearch?: WebSearchConfig;
   temperature?: number;
   maxTokens?: number;
+  /** HuggingFace inference provider ID (e.g., 'groq', 'together') */
+  hfProviderId?: string;
 }
 
 type RetryScope = 'failed' | 'failed-edited' | 'all';
@@ -193,6 +197,7 @@ export function RetryModal({
   webSearchConfig,
   temperature: initialTemperature = 0.7,
   maxTokens: initialMaxTokens = 500,
+  hfProviderId,
 }: RetryModalProps) {
   const [scope, setScope] = useState<RetryScope>('failed');
   const [includeFewShot, setIncludeFewShot] = useState(true);
@@ -267,6 +272,7 @@ export function RetryModal({
         webSearch: webSearchEnabled ? currentWebSearchConfig : undefined,
         temperature,
         maxTokens,
+        hfProviderId,  // Pass HuggingFace inference provider ID
       });
       onClose();
     } catch (error) {

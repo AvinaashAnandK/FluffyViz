@@ -6,7 +6,7 @@ import { createMistral } from '@ai-sdk/mistral'
 import { createCohere } from '@ai-sdk/cohere'
 import { createGroq } from '@ai-sdk/groq'
 import { createPerplexity } from '@ai-sdk/perplexity'
-import { HfInference } from '@huggingface/inference'
+import { InferenceClient, HfInference } from '@huggingface/inference'
 import type { ProviderKey } from '@/config/provider-settings'
 import { Model, ModelProvider } from '@/types/models'
 import type { FailureType } from '@/lib/duckdb'
@@ -22,6 +22,8 @@ export interface InferenceOptions {
   temperature?: number
   maxTokens?: number
   webSearch?: WebSearchConfig
+  /** HuggingFace inference provider ID (e.g., 'groq', 'together', 'nebius') */
+  hfProviderId?: string
 }
 
 export interface InferenceResult {
@@ -371,17 +373,41 @@ function getPerplexityProviderOptions(webSearch?: WebSearchConfig): Record<strin
 }
 
 /**
- * HuggingFace-specific inference
+ * HuggingFace-specific inference using InferenceClient
+ * Supports routing through HF inference providers (Groq, Together, Nebius, etc.)
  */
 async function generateHuggingFaceCompletion(
   options: InferenceOptions
 ): Promise<InferenceResult> {
-  const { model, prompt, temperature = 0.7, maxTokens = 500 } = options
+  const { model, prompt, temperature = 0.7, maxTokens = 500, hfProviderId } = options
   const apiKey = options.provider.apiKey
 
-  const hf = new HfInference(apiKey)
-
   try {
+    // Use InferenceClient for models with a specific provider
+    // This routes through HF's inference router to the provider
+    if (hfProviderId) {
+      console.log('[HF Inference] Using InferenceClient with provider:', hfProviderId, 'for model:', model.id)
+
+      const client = new InferenceClient(apiKey)
+
+      const response = await client.chatCompletion({
+        model: model.id,
+        provider: hfProviderId as any,  // Provider ID is validated by HF API
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: maxTokens,
+        temperature,
+      })
+
+      return {
+        content: response.choices[0]?.message?.content || '',
+      }
+    }
+
+    // Fallback: Use legacy HfInference for direct HF Inference API calls
+    // (for backward compatibility with existing columns)
+    console.log('[HF Inference] Using legacy HfInference for model:', model.id)
+    const hf = new HfInference(apiKey)
+
     // Use chat completion for instruction models
     if (
       model.id.includes('Instruct') ||
@@ -415,6 +441,7 @@ async function generateHuggingFaceCompletion(
       }
     }
   } catch (error) {
+    console.error('[HF Inference] Error:', error)
     const errorType = classifyError(error)
     return {
       content: '',
@@ -897,7 +924,8 @@ export async function generateColumnData(
   onProgress?: (current: number, total: number) => void,
   onCellComplete?: (rowIndex: number, result: InferenceResult) => void,
   outputSchema?: OutputSchema,
-  webSearch?: WebSearchConfig
+  webSearch?: WebSearchConfig,
+  hfProviderId?: string  // HuggingFace inference provider ID
 ): Promise<Map<number, InferenceResult>> {
   try {
     // Call the server-side API endpoint for batch generation
@@ -915,6 +943,7 @@ export async function generateColumnData(
         maxTokens: 500,
         outputSchema: outputSchema?.mode === 'structured' ? outputSchema : undefined,
         webSearch,
+        hfProviderId,  // Pass HuggingFace inference provider ID
       }),
     })
 

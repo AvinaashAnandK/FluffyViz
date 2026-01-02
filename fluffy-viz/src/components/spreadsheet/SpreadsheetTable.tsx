@@ -542,9 +542,17 @@ export function SpreadsheetTable({
                           </Tooltip>
                         </TooltipProvider>
                       ) : (
-                        <button
-                          className="w-full p-3 text-left hover:bg-accent hover:text-accent-foreground transition-colors"
+                        <div
+                          className="w-full p-3 text-left hover:bg-accent hover:text-accent-foreground transition-colors cursor-pointer"
                           onClick={() => handleSort(column.id)}
+                          role="button"
+                          tabIndex={0}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault()
+                              handleSort(column.id)
+                            }
+                          }}
                         >
                           <div className="flex items-center justify-between gap-2">
                             <div className="flex flex-col flex-1 min-w-0">
@@ -627,7 +635,7 @@ export function SpreadsheetTable({
                               {getSortIcon(column.id)}
                             </div>
                           </div>
-                        </button>
+                        </div>
                       )}
                       {/* Resize handle */}
                       <div

@@ -36,6 +36,7 @@ export async function POST(req: NextRequest) {
       maxTokens = 500,
       outputSchema,
       webSearch,
+      hfProviderId,  // HuggingFace inference provider ID (e.g., 'groq', 'together')
     } = await req.json()
 
     const isStructuredOutput = outputSchema?.mode === 'structured' && outputSchema?.fields?.length > 0
@@ -44,6 +45,7 @@ export async function POST(req: NextRequest) {
     console.log('[Generate Column] Request:', {
       providerId,
       modelId,
+      hfProviderId,
       rowCount: rows?.length,
       hasPrompt: !!prompt,
       isStructuredOutput,
@@ -92,8 +94,25 @@ export async function POST(req: NextRequest) {
 
     console.log('[Generate Column] API key found:', apiKey.substring(0, 10) + '...')
 
-    // Get model config
-    const modelConfig = getModelById(modelId)
+    // Get model config from registry, or create dynamic config for HuggingFace models
+    let modelConfig = getModelById(modelId)
+
+    // For HuggingFace models loaded dynamically from HF Hub API,
+    // create a minimal model config if not in static registry
+    if (!modelConfig && providerId === 'huggingface' && hfProviderId) {
+      console.log('[Generate Column] Creating dynamic config for HuggingFace model:', modelId)
+      modelConfig = {
+        id: modelId,
+        name: modelId.split('/').pop() || modelId,
+        type: 'text' as const,
+        recommended: false,
+        // HF models use InferenceClient which handles the API mode internally
+        contextWindow: 8192,  // Default context window
+        searchSupport: false,
+        searchBuiltIn: false,
+      }
+    }
+
     if (!modelConfig) {
       return NextResponse.json(
         { error: `Model ${modelId} not found` },
@@ -154,6 +173,7 @@ export async function POST(req: NextRequest) {
               maxTokens,
               outputSchema: outputSchema as OutputSchema,
               webSearch: webSearch as WebSearchConfig | undefined,
+              hfProviderId,  // Pass HuggingFace provider ID
             }, modelConfig)
           } else {
             // Use regular text completion
@@ -169,6 +189,7 @@ export async function POST(req: NextRequest) {
               temperature,
               maxTokens,
               webSearch: webSearch as WebSearchConfig | undefined,
+              hfProviderId,  // Pass HuggingFace provider ID
             }, modelConfig)
           }
 

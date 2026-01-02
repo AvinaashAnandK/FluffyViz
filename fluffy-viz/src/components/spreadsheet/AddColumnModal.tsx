@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { X, AlertCircle, Settings2, Globe } from 'lucide-react'
 import { ModelSelector } from './ModelSelector'
 import { ProviderSelector } from './ProviderSelector'
+import { HuggingFaceModelSelector, HuggingFaceModelSelection } from './HuggingFaceModelSelector'
 import { PromptComposer } from './PromptComposer'
 import { SchemaBuilder } from './SchemaBuilder'
 import { GenerationSettings } from './GenerationSettings'
@@ -40,6 +41,7 @@ interface AddColumnModalProps {
     webSearch?: WebSearchConfig
     temperature?: number
     maxTokens?: number
+    hfProviderId?: string  // HuggingFace inference provider ID (e.g., 'groq', 'together')
   }) => void
   template: string | null
   availableColumns: ColumnInfo[]
@@ -81,6 +83,9 @@ export function AddColumnModal({
     enabled: false,
     contextSize: 'medium',
   })
+
+  // HuggingFace model selection state
+  const [hfSelection, setHfSelection] = useState<HuggingFaceModelSelection | undefined>(undefined)
 
   // Model registry for filtering
   const [allModels, setAllModels] = useState<any[]>([])
@@ -261,10 +266,23 @@ export function AddColumnModal({
     setSelectedProvider(provider)
     // Clear model selection when provider changes
     setSelectedModel(undefined)
+    // Clear HF selection when provider changes
+    setHfSelection(undefined)
   }
 
   const handleModelSelect = (model: Model) => {
     setSelectedModel(model)
+  }
+
+  // Handle HuggingFace model+provider selection
+  const handleHuggingFaceSelect = (selection: HuggingFaceModelSelection) => {
+    setHfSelection(selection)
+    // Also set the model for form validation
+    setSelectedModel({
+      id: selection.modelId,
+      name: selection.modelName,
+      provider: 'huggingface',
+    })
   }
 
   const handlePromptChange = (newPrompt: string, isValid: boolean) => {
@@ -290,12 +308,18 @@ export function AddColumnModal({
       })
     } else {
       // Regular column validation
-      if (!columnName.trim() || !prompt.trim() || !promptValid || !selectedModel || !selectedProvider || !isSchemaValid) return
+      // For HuggingFace, require hfSelection (which includes provider selection)
+      const isHuggingFaceProvider = selectedProvider?.id === 'huggingface'
+      const hfValidation = isHuggingFaceProvider ? !!hfSelection : true
+      if (!columnName.trim() || !prompt.trim() || !promptValid || !selectedModel || !selectedProvider || !isSchemaValid || !hfValidation) return
 
       // For Perplexity (built-in search), always pass webSearch for location settings
       // even if the toggle is off (since search is always-on for Perplexity)
       const isPerplexityBuiltInSearch = selectedProvider?.id === 'perplexity'
       const shouldPassWebSearch = webSearchEnabled || isPerplexityBuiltInSearch
+
+      // For HuggingFace, include the inference provider ID
+      const isHuggingFace = selectedProvider?.id === 'huggingface'
 
       onAddColumn({
         name: columnName.trim(),
@@ -306,6 +330,7 @@ export function AddColumnModal({
         webSearch: shouldPassWebSearch ? { ...webSearchConfig, enabled: shouldPassWebSearch } : undefined,
         temperature,
         maxTokens,
+        hfProviderId: isHuggingFace && hfSelection ? hfSelection.providerId : undefined,
       })
     }
 
@@ -322,6 +347,7 @@ export function AddColumnModal({
     setWebSearchConfig({ enabled: false, contextSize: 'medium' })
     setTemperature(0.7)
     setMaxTokens(500)
+    setHfSelection(undefined)
   }
 
   return (
@@ -533,17 +559,27 @@ export function AddColumnModal({
 
                   <div>
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                      Model {selectedProvider ? `(filtered by ${selectedProvider.displayName})` : ''}
+                      Model {selectedProvider && selectedProvider.id !== 'huggingface' ? `(filtered by ${selectedProvider.displayName})` : ''}
                       {webSearchEnabled ? ' - search enabled' : ''}
                     </label>
-                    <ModelSelector
-                      selectedModel={selectedModel}
-                      onModelSelect={handleModelSelect}
-                      placeholder="Search and select a model..."
-                      className="w-full"
-                      filterByProvider={selectedProvider?.id}
-                      filterByWebSearch={webSearchEnabled}
-                    />
+                    {/* Use HuggingFaceModelSelector for HuggingFace provider */}
+                    {selectedProvider?.id === 'huggingface' ? (
+                      <HuggingFaceModelSelector
+                        selection={hfSelection}
+                        onSelect={handleHuggingFaceSelect}
+                        pipelineTag="text-generation"
+                        className="w-full"
+                      />
+                    ) : (
+                      <ModelSelector
+                        selectedModel={selectedModel}
+                        onModelSelect={handleModelSelect}
+                        placeholder="Search and select a model..."
+                        className="w-full"
+                        filterByProvider={selectedProvider?.id}
+                        filterByWebSearch={webSearchEnabled}
+                      />
+                    )}
                   </div>
                 </div>
               </>
@@ -562,7 +598,7 @@ export function AddColumnModal({
               isDuplicateName ||
               (isConversationalHistory
                 ? !columnName.trim() || !convHistoryConfig
-                : !selectedModel || !selectedProvider || !columnName.trim() || !prompt.trim() || !promptValid || !isSchemaValid)
+                : !selectedModel || !selectedProvider || !columnName.trim() || !prompt.trim() || !promptValid || !isSchemaValid || (selectedProvider?.id === 'huggingface' && !hfSelection))
             }
             className="w-full px-4 py-2 text-white bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed rounded-md transition-colors"
           >
