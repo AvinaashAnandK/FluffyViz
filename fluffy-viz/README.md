@@ -123,6 +123,40 @@ A local-first web application for AI/ML engineers to parse, augment, and visuali
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+### Cluster Management UI
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                   Cluster Management Dialog                      │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│   [Overview]    [Agglomerate]    [Validate (Soon)]              │
+│                                                                  │
+│   Overview Tab:                                                  │
+│   ┌─────────────────────────────────────────────────────────┐   │
+│   │  🏷️ Name All Clusters    ⚙️ Configure Model              │   │
+│   │                                                          │   │
+│   │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │   │
+│   │  │  Cluster 0   │  │  Cluster 1   │  │  Cluster 2   │  │   │
+│   │  │  42 points   │  │  38 points   │  │  27 points   │  │   │
+│   │  │  [examples]  │  │  [examples]  │  │  [examples]  │  │   │
+│   │  └──────────────┘  └──────────────┘  └──────────────┘  │   │
+│   └─────────────────────────────────────────────────────────┘   │
+│                                                                  │
+│   Agglomerate Tab:                                               │
+│   ┌─────────────────────────────────────────────────────────┐   │
+│   │  Similarity Threshold  ─────────────●─────────  0.80    │   │
+│   │  Linkage: ○ Average ○ Complete ○ Single                 │   │
+│   │                                                          │   │
+│   │  [Preview Agglomeration]                                 │   │
+│   │                                                          │   │
+│   │  Preview: 20 → 12 clusters                              │   │
+│   │  • Super-topic 1: Clusters 0, 3, 8 (103 points)        │   │
+│   │  • Super-topic 2: Clusters 1, 5 (65 points)            │   │
+│   └─────────────────────────────────────────────────────────┘   │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
 ## Architecture
 
 ```
@@ -307,7 +341,10 @@ fluffy-viz/
 │   │   ├── embedding-viewer/     # Visualization
 │   │   │   ├── embedding-wizard.tsx
 │   │   │   ├── embedding-visualization.tsx
-│   │   │   └── agent-trace-viewer.tsx
+│   │   │   ├── agent-trace-viewer.tsx
+│   │   │   ├── ClusterManagementDialog.tsx
+│   │   │   ├── ClusterCard.tsx
+│   │   │   └── AgglomerateTab.tsx
 │   │   └── ui/                   # shadcn components
 │   │
 │   ├── lib/
@@ -384,7 +421,8 @@ npm run lint
 
 ## Console Tools for Cluster Analysis
 
-FluffyViz provides browser console tools (`window.clusterSim`) for advanced cluster analysis:
+FluffyViz provides browser console tools (`window.clusterSim`) for advanced cluster analysis.
+Most of these features are also available via the **Cluster Management Dialog** UI.
 
 ```javascript
 // Access via browser Developer Console (F12)
@@ -395,14 +433,18 @@ await clusterSim.similarity(layerId, 9, 13)    // Compare two clusters
 await clusterSim.neighbors(layerId, 9)          // Find similar clusters
 await clusterSim.findSimilar(layerId, 0.85)    // Pairs above threshold
 
-// Agglomerative clustering
+// Agglomerative clustering (also available in UI)
 await clusterSim.agglomerate(layerId, 0.80)             // average linkage
 await clusterSim.agglomerate(layerId, 0.80, 'single')   // single linkage
 await clusterSim.agglomerate(layerId, 0.80, 'complete') // complete linkage
 
-// LLM-based labeling
+// LLM-based labeling (also available in UI)
 await clusterSim.labelCluster(layerId, 9)       // Label single cluster
 await clusterSim.labelAllClusters(layerId)      // Label all clusters
+
+// Sample cluster examples (used by UI)
+await clusterSim.sampleClusterExamples(layerId, 9)  // Get sample texts
+await clusterSim.sampleAllClusterExamples(layerId)  // All clusters
 ```
 
 See [technical_docs.md](./technical_docs.md) for full documentation.

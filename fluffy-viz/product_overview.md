@@ -142,7 +142,29 @@ Generate and visualize semantic embeddings with advanced clustering and analysis
 - Save selections as reusable filters
 - Apply filters to spreadsheet view
 
-### 8. Cluster Analysis Console Tools
+### 8. Cluster Management UI
+
+A comprehensive dialog for managing, naming, and organizing clusters:
+
+**Overview Tab**:
+- View all clusters as cards with sample conversations
+- **Name All Clusters**: One-click LLM-based naming with configurable provider/model
+- **Inline Editing**: Click to manually edit cluster titles
+- **Cluster Cards**: Display title, labels, description, and sample texts
+- **Advanced Settings**: Re-cluster with new parameters (UMAP neighbors, min cluster size, min samples)
+
+**Agglomerate Tab**:
+- Merge similar clusters into super-topics
+- **Similarity Threshold**: Slider control (0.0 - 1.0, typically 0.70 - 0.90)
+- **Linkage Methods**: Average (recommended), Complete (conservative), Single (aggressive)
+- **Preview Results**: See merged groups before applying
+- **Apply/Cancel**: Review and confirm before changes are saved
+
+**Validate Tab** (Coming Soon):
+- LLM validation of cluster quality
+- Coherence scoring and improvement suggestions
+
+### 9. Cluster Analysis Console Tools
 
 Browser console tools (`window.clusterSim`) for advanced cluster exploration:
 
@@ -165,7 +187,7 @@ Browser console tools (`window.clusterSim`) for advanced cluster exploration:
 
 See [technical_docs.md](./technical_docs.md) for usage examples.
 
-### 9. Privacy-First Architecture
+### 10. Privacy-First Architecture
 
 - **All data stays in your browser** - DuckDB WASM database
 - **No server-side storage** - Files stored in IndexedDB
@@ -250,9 +272,22 @@ Gain insights into:
    - Adjust point size
    - Enable/disable auto cluster labels
    - View cluster statistics
-   - Re-cluster with different parameters
 7. Click points to view full traces
 8. Save point selections as filters
+
+### Step 7: Manage Clusters
+
+1. Click "Clusters" button in visualization toolbar
+2. Use **Cluster Management Dialog**:
+   - **Overview Tab**: View cluster cards with sample conversations
+   - **Name All**: Generate LLM-based titles for all clusters
+   - **Edit**: Click pencil icon to manually edit cluster names
+   - **Advanced Settings**: Re-cluster with new parameters
+3. **Agglomerate Tab**: Merge similar clusters into super-topics
+   - Set similarity threshold (0.70 - 0.90 typical)
+   - Choose linkage method (average recommended)
+   - Preview and apply merges
+4. Named clusters appear on the visualization
 
 ---
 
@@ -542,18 +577,21 @@ See [technical_docs.md](./technical_docs.md) for implementation details.
 - ✅ Hybrid clustering with HDBSCAN + K-Means
 - ✅ Two-stage UMAP for clustering and visualization
 - ✅ Re-clustering with parameter tuning
-- ✅ Cluster labeling with LLM (console tools)
+- ✅ Cluster labeling with LLM (console tools + UI)
 - ✅ Agglomerative super-topics with linkage options
 - ✅ Silhouette scoring for cluster quality
+- ✅ **Cluster Management Dialog** (Overview, Agglomerate tabs)
+- ✅ **Cluster Cards** with inline editing
+- ✅ **Batch LLM naming** for all clusters
+- ✅ **Agglomeration preview** before applying
 
 ### Current Focus
-- Cluster labeling UI integration
-- Super-topic validation with LLM
+- Cluster validation with LLM (Validate tab)
 - Export functionality (CSV, JSON, Parquet)
+- Manual cluster drag-and-drop merging
 
 ### Future Plans
 - Label embedding clustering (alternative hierarchy approach)
-- Manual cluster merge UI
 - Cluster coherence evaluation
 - Web Worker support for large files
 - Virtual scrolling for 10k+ row datasets

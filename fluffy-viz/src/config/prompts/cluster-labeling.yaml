@@ -14,47 +14,31 @@ cluster_label:
   temperature: 0.3
   max_tokens: 500
   prompt: |
-    You are an expert at identifying common intents and themes in conversations and assigning concise, high-signal cluster metadata.
+    You are an expert at analyzing conversation topics and creating concise, descriptive labels.
 
     ## Task
-    Given {{SAMPLE_COUNT}} sample conversations from cluster {{CLUSTER_ID}}, infer the shared theme and produce:
-    1. **title**: A specific 3–5 word title (no punctuation-heavy titles; avoid "General", "Misc", "Help")
-    2. **labels**: 3–6 tags (single words or short phrases, lowercase, no duplicates)
-    3. **description**: 1–2 sentences describing the typical user intent + context (what they're trying to achieve and why)
+    Analyze the following {{SAMPLE_COUNT}} sample conversations from a cluster and generate:
+    1. **Title**: Exactly 3-4 words in Title Case that captures the core theme. Must be specific enough to distinguish from similar topics.
+    2. **Labels**: Exactly 5 categorical tags for filtering (e.g., "technical", "creative", "beginner"). Avoid specific technology names or proper nouns.
+    3. **Description**: 1-2 sentences describing what users are trying to accomplish (intent), not just the surface topic.
 
-    ## How to decide the theme
-    - Prioritize **intent** over topic: what users want done (e.g., "debug build errors", "draft apology email", "plan weekend itinerary").
-    - Use patterns across **most samples**; if there are two distinct intents, pick the dominant one and reflect the other in labels.
-    - If the cluster is genuinely mixed, title it by the **shared umbrella intent** (e.g., "writing polish requests"), not by a narrow example.
+    ## Rules
+    - Title must be in Title Case (e.g., "Redis Cache Integration" not "redis cache integration")
+    - Labels should be broad categories useful for filtering, not keywords from the text
+    - Description should focus on USER INTENT, not content summary
+    - Base analysis on patterns across ALL samples
 
-    ## Title rules (3–5 words)
-    - Make it discriminative: include the object + action when possible ("resume bullet rewrites", "python install troubleshooting").
-    - Avoid generic phrasing ("questions", "assistance", "miscellaneous", "general help").
-    - Avoid product names unless the product is central in most samples.
+    ## Sample Conversations from Cluster {{CLUSTER_ID}}
 
-    ## Label rules (3–6 tags)
-    - Tags must be useful for filtering and reusable across clusters.
-    - Include a mix when relevant:
-      - domain (e.g., "coding", "career", "travel", "health")
-      - task type (e.g., "troubleshooting", "summarization", "brainstorming", "planning")
-      - audience/level (e.g., "beginner", "advanced") if strongly evidenced
-    - Prefer short phrases over long ones (max 2–3 words).
-    - Use lowercase; no punctuation; no trailing spaces.
-
-    ## Description rules (1–2 sentences)
-    - Sentence 1: typical user goal (what outcome they want).
-    - Sentence 2 (optional): common constraints/tools/context (formatting, tone, platform, timeframe).
-    - Don't describe the assistant; describe the users' needs.
-
-    ## Input samples
     {{SAMPLES}}
 
-    ## Output requirements
-    Return **valid JSON only** (no markdown, no code fences, no commentary).
-    - Keys must be exactly: "title", "labels", "description"
-    - "labels" must be an array of strings
-    - Do not include nulls or extra keys
-    - Ensure the JSON parses
+    ## Output Format
+    Return **valid JSON only** (no markdown, no code fences, no commentary):
+    {
+      "title": "Three To Four Words",
+      "labels": ["category1", "category2", "category3", "category4", "category5"],
+      "description": "Users want to [intent]. They typically [pattern]."
+    }
 
 # =============================================================================
 # SUPER-TOPIC LABELING

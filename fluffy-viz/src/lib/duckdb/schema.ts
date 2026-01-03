@@ -276,6 +276,22 @@ export async function initializeSchema(): Promise<void> {
     `);
     console.log('[DuckDB Schema] ✓ Saved filters table created');
 
+    // Create cluster_labels table for LLM-generated cluster names
+    await executeQuery(`
+      CREATE TABLE IF NOT EXISTS cluster_labels (
+        layer_id TEXT NOT NULL,
+        cluster_id INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        labels JSON NOT NULL,
+        description TEXT NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        is_manual_edit BOOLEAN DEFAULT FALSE,
+        PRIMARY KEY (layer_id, cluster_id)
+      )
+    `);
+    console.log('[DuckDB Schema] ✓ Cluster labels table created');
+
     // Create view for embedding visualization with x, y columns
     // This view extracts array elements for embedding-atlas compatibility
     await executeQuery(`

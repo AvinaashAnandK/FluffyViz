@@ -402,6 +402,7 @@ export async function createLayerTable(layerId: string, fileId: string): Promise
     // Note: We join on source_row_indices[1] because for 1:1 modes (single/multi),
     // there's exactly one source row per embedding point
     // Note: cluster_id is cast to VARCHAR and labeled for categorical coloring in embedding-atlas
+    // Note: LEFT JOIN with cluster_labels to show LLM-generated cluster names when available
     const createSQL = `
       CREATE TABLE "${tableName}" AS
       SELECT
@@ -412,10 +413,14 @@ export async function createLayerTable(layerId: string, fileId: string): Promise
         ep.neighbors,
         CASE
           WHEN ep.cluster_id = -1 THEN 'Noise'
+          WHEN cl.title IS NOT NULL THEN cl.title
           ELSE 'Cluster ' || CAST(ep.cluster_id AS VARCHAR)
         END AS cluster,
+        ep.cluster_id AS cluster_id,
         ${safeFileDataColumns}
       FROM embedding_points ep
+      LEFT JOIN cluster_labels cl
+        ON ep.layer_id = cl.layer_id AND ep.cluster_id = cl.cluster_id
       JOIN "${fileTableName}" fd
         ON fd.row_index = ep.source_row_indices[1]
       WHERE ep.layer_id = '${layerId}'
@@ -560,5 +565,254 @@ export async function updateClusterMetadata(
   } catch (error) {
     console.error('[Embedding Storage] Error updating cluster metadata:', error);
     throw error;
+  }
+}
+
+// =============================================================================
+// CLUSTER LABEL STORAGE
+// =============================================================================
+
+/**
+ * Cluster label structure for LLM-generated names
+ */
+export interface ClusterLabel {
+  clusterId: number;
+  title: string;
+  labels: string[];
+  description: string;
+  isManualEdit?: boolean;
+}
+
+/**
+ * Save a cluster label to the database.
+ * Inserts or updates the label for a specific cluster.
+ */
+export async function saveClusterLabel(
+  layerId: string,
+  label: ClusterLabel
+): Promise<void> {
+  console.log(`[Embedding Storage] Saving label for cluster ${label.clusterId} in layer ${layerId}`);
+
+  try {
+    const now = new Date().toISOString();
+    const labelsJson = formatValue(JSON.stringify(label.labels));
+
+    await executeQuery(`
+      INSERT INTO cluster_labels (
+        layer_id, cluster_id, title, labels, description,
+        created_at, updated_at, is_manual_edit
+      ) VALUES (
+        ${formatValue(layerId)},
+        ${label.clusterId},
+        ${formatValue(label.title)},
+        ${labelsJson},
+        ${formatValue(label.description)},
+        ${formatValue(now)},
+        ${formatValue(now)},
+        ${label.isManualEdit ? 'TRUE' : 'FALSE'}
+      )
+      ON CONFLICT (layer_id, cluster_id) DO UPDATE SET
+        title = ${formatValue(label.title)},
+        labels = ${labelsJson},
+        description = ${formatValue(label.description)},
+        updated_at = ${formatValue(now)},
+        is_manual_edit = ${label.isManualEdit ? 'TRUE' : 'FALSE'}
+    `);
+
+    console.log(`[Embedding Storage] ✓ Cluster label saved`);
+  } catch (error) {
+    console.error('[Embedding Storage] Error saving cluster label:', error);
+    throw error;
+  }
+}
+
+/**
+ * Save multiple cluster labels in a batch.
+ */
+export async function saveClusterLabels(
+  layerId: string,
+  labels: ClusterLabel[]
+): Promise<void> {
+  console.log(`[Embedding Storage] Saving ${labels.length} cluster labels for layer ${layerId}`);
+
+  const conn = await getConnection();
+
+  try {
+    await conn.query('BEGIN TRANSACTION');
+
+    const now = new Date().toISOString();
+
+    for (const label of labels) {
+      const labelsJson = formatValue(JSON.stringify(label.labels));
+
+      await conn.query(`
+        INSERT INTO cluster_labels (
+          layer_id, cluster_id, title, labels, description,
+          created_at, updated_at, is_manual_edit
+        ) VALUES (
+          ${formatValue(layerId)},
+          ${label.clusterId},
+          ${formatValue(label.title)},
+          ${labelsJson},
+          ${formatValue(label.description)},
+          ${formatValue(now)},
+          ${formatValue(now)},
+          ${label.isManualEdit ? 'TRUE' : 'FALSE'}
+        )
+        ON CONFLICT (layer_id, cluster_id) DO UPDATE SET
+          title = ${formatValue(label.title)},
+          labels = ${labelsJson},
+          description = ${formatValue(label.description)},
+          updated_at = ${formatValue(now)},
+          is_manual_edit = ${label.isManualEdit ? 'TRUE' : 'FALSE'}
+      `);
+    }
+
+    await conn.query('COMMIT');
+    console.log(`[Embedding Storage] ✓ ${labels.length} cluster labels saved`);
+  } catch (error) {
+    await conn.query('ROLLBACK');
+    console.error('[Embedding Storage] Error saving cluster labels:', error);
+    throw error;
+  } finally {
+    await conn.close();
+  }
+}
+
+/**
+ * Get all cluster labels for a layer.
+ * Returns a Map of clusterId -> ClusterLabel.
+ */
+export async function getClusterLabels(
+  layerId: string
+): Promise<Map<number, ClusterLabel>> {
+  console.log(`[Embedding Storage] Getting cluster labels for layer ${layerId}`);
+
+  try {
+    const results = await executeQuery<{
+      cluster_id: number;
+      title: string;
+      labels: string;
+      description: string;
+      is_manual_edit: boolean;
+    }>(`
+      SELECT cluster_id, title, labels, description, is_manual_edit
+      FROM cluster_labels
+      WHERE layer_id = ${formatValue(layerId)}
+      ORDER BY cluster_id
+    `);
+
+    const labelMap = new Map<number, ClusterLabel>();
+
+    for (const row of results) {
+      labelMap.set(row.cluster_id, {
+        clusterId: row.cluster_id,
+        title: row.title,
+        labels: JSON.parse(row.labels),
+        description: row.description,
+        isManualEdit: row.is_manual_edit,
+      });
+    }
+
+    console.log(`[Embedding Storage] ✓ Found ${labelMap.size} cluster labels`);
+    return labelMap;
+  } catch (error) {
+    console.error('[Embedding Storage] Error getting cluster labels:', error);
+    throw error;
+  }
+}
+
+/**
+ * Delete cluster labels for specific cluster IDs.
+ * Used when merging clusters or re-clustering.
+ */
+export async function deleteClusterLabels(
+  layerId: string,
+  clusterIds: number[]
+): Promise<void> {
+  if (clusterIds.length === 0) return;
+
+  console.log(`[Embedding Storage] Deleting labels for clusters [${clusterIds.join(', ')}] in layer ${layerId}`);
+
+  try {
+    const idList = clusterIds.join(', ');
+
+    await executeQuery(`
+      DELETE FROM cluster_labels
+      WHERE layer_id = ${formatValue(layerId)}
+        AND cluster_id IN (${idList})
+    `);
+
+    console.log(`[Embedding Storage] ✓ Deleted ${clusterIds.length} cluster labels`);
+  } catch (error) {
+    console.error('[Embedding Storage] Error deleting cluster labels:', error);
+    throw error;
+  }
+}
+
+/**
+ * Delete all cluster labels for a layer.
+ * Used when re-clustering with new parameters.
+ */
+export async function deleteAllClusterLabels(layerId: string): Promise<void> {
+  console.log(`[Embedding Storage] Deleting all cluster labels for layer ${layerId}`);
+
+  try {
+    await executeQuery(`
+      DELETE FROM cluster_labels
+      WHERE layer_id = ${formatValue(layerId)}
+    `);
+
+    console.log(`[Embedding Storage] ✓ All cluster labels deleted`);
+  } catch (error) {
+    console.error('[Embedding Storage] Error deleting all cluster labels:', error);
+    throw error;
+  }
+}
+
+/**
+ * Merge clusters by updating cluster_id values.
+ * All points in sourceIds will be reassigned to targetId.
+ * Also handles cluster label cleanup.
+ */
+export async function mergeClusterIds(
+  layerId: string,
+  targetId: number,
+  sourceIds: number[]
+): Promise<void> {
+  if (sourceIds.length === 0) return;
+
+  console.log(`[Embedding Storage] Merging clusters [${sourceIds.join(', ')}] → ${targetId} in layer ${layerId}`);
+
+  const conn = await getConnection();
+
+  try {
+    await conn.query('BEGIN TRANSACTION');
+
+    // Update cluster_id for all points in source clusters
+    const sourceIdList = sourceIds.join(', ');
+    await conn.query(`
+      UPDATE embedding_points
+      SET cluster_id = ${targetId}
+      WHERE layer_id = ${formatValue(layerId)}
+        AND cluster_id IN (${sourceIdList})
+    `);
+
+    // Delete labels for source clusters (they're now merged)
+    await conn.query(`
+      DELETE FROM cluster_labels
+      WHERE layer_id = ${formatValue(layerId)}
+        AND cluster_id IN (${sourceIdList})
+    `);
+
+    await conn.query('COMMIT');
+
+    console.log(`[Embedding Storage] ✓ Merged ${sourceIds.length} clusters into cluster ${targetId}`);
+  } catch (error) {
+    await conn.query('ROLLBACK');
+    console.error('[Embedding Storage] Error merging clusters:', error);
+    throw error;
+  } finally {
+    await conn.close();
   }
 }

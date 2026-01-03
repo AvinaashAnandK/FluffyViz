@@ -120,6 +120,9 @@ fluffy-viz/
 │   │   │   ├── embedding-wizard.tsx  # Multi-step wizard
 │   │   │   ├── embedding-visualization.tsx # Atlas integration
 │   │   │   ├── agent-trace-viewer.tsx # Main container
+│   │   │   ├── ClusterManagementDialog.tsx # Cluster management UI
+│   │   │   ├── ClusterCard.tsx       # Individual cluster display
+│   │   │   ├── AgglomerateTab.tsx    # Agglomeration controls
 │   │   │   └── save-filter-modal.tsx # Filter persistence
 │   │   │
 │   │   ├── ui/                       # shadcn/ui components
@@ -643,6 +646,159 @@ Let users manually merge singleton clusters in the visualization:
 - Select clusters in the scatter plot
 - Review cluster labels and samples
 - Merge into existing super-topic or create new one
+
+---
+
+## Cluster Management UI
+
+### ClusterManagementDialog Component
+
+The main dialog for cluster operations, accessible via the "Clusters" button in the visualization toolbar.
+
+```typescript
+// src/components/embedding-viewer/ClusterManagementDialog.tsx
+
+interface ClusterManagementDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  layer: ActiveEmbeddingLayer;
+  fileId: string;
+  onLayerUpdate?: (layer: ActiveEmbeddingLayer) => void;
+  onViewConfigUpdate?: () => void;
+  onRecluster?: (params: { nNeighbors: number; minClusterSize: number; minSamples: number }) => Promise<void>;
+  isReclustering?: boolean;
+}
+```
+
+**Three Tabs:**
+1. **Overview**: View and name clusters
+2. **Agglomerate**: Merge similar clusters
+3. **Validate**: LLM validation (coming soon)
+
+### ClusterCard Component
+
+Displays individual cluster information with editing capabilities.
+
+```typescript
+// src/components/embedding-viewer/ClusterCard.tsx
+
+interface ClusterCardProps {
+  clusterId: number;
+  pointCount: number;
+  examples: string[];           // Sample texts from cluster
+  label?: ClusterLabel;         // Title, labels, description
+  isEditing: boolean;
+  onEditStart: () => void;
+  onEditSave: (title: string) => void;
+  onEditCancel: () => void;
+}
+```
+
+**Features:**
+- Named/unnamed states with visual distinction
+- Inline title editing
+- Expandable example text
+- Labels and description display
+
+### AgglomerateTab Component
+
+UI for agglomerative clustering operations.
+
+```typescript
+// src/components/embedding-viewer/AgglomerateTab.tsx
+
+interface AgglomerateTabProps {
+  layerId: string;
+  clusterLabels: Map<number, ClusterLabel>;
+  clusterSizes: Record<number, number>;
+  onApply: (result: AgglomerativeResult) => void;
+}
+
+interface AgglomerativeResult {
+  threshold: number;
+  linkage: 'single' | 'complete' | 'average';
+  superTopics: SuperTopic[];     // Merged cluster groups
+  singletons: number[];          // Unchanged clusters
+  originalClusterCount: number;
+  resultingClusterCount: number;
+}
+```
+
+**Controls:**
+- Similarity threshold slider (0.0 - 1.0)
+- Linkage method selection (radio buttons)
+- Preview before applying
+- Shows merged groups and unchanged clusters
+
+### Cluster Label Storage
+
+```typescript
+// src/lib/embedding/storage.ts
+
+interface ClusterLabel {
+  clusterId: number;
+  title: string;
+  labels: string[];
+  description: string;
+  isManualEdit?: boolean;
+}
+
+// Save a single cluster label
+export async function saveClusterLabel(
+  layerId: string,
+  label: ClusterLabel
+): Promise<void>;
+
+// Save multiple cluster labels (batch)
+export async function saveClusterLabels(
+  layerId: string,
+  labels: ClusterLabel[]
+): Promise<void>;
+
+// Retrieve all labels for a layer
+export async function getClusterLabels(
+  layerId: string
+): Promise<Map<number, ClusterLabel>>;
+
+// Delete labels for specific clusters
+export async function deleteClusterLabels(
+  layerId: string,
+  clusterIds: number[]
+): Promise<void>;
+
+// Delete all labels for a layer
+export async function deleteAllClusterLabels(
+  layerId: string
+): Promise<void>;
+
+// Merge cluster IDs (for agglomeration)
+export async function mergeClusterIds(
+  layerId: string,
+  targetId: number,
+  sourceIds: number[]
+): Promise<void>;
+```
+
+### Cluster Example Sampling
+
+```typescript
+// src/lib/embedding/cluster-similarity.ts
+
+// Sample texts from a single cluster
+export async function sampleClusterExamples(
+  layerId: string,
+  clusterId: number,
+  count?: number,      // Default: 3
+  maxLength?: number   // Default: 150 chars
+): Promise<string[]>;
+
+// Sample texts from all clusters (for ClusterCards)
+export async function sampleAllClusterExamples(
+  layerId: string,
+  count?: number,
+  maxLength?: number
+): Promise<Map<number, string[]>>;
+```
 
 ---
 

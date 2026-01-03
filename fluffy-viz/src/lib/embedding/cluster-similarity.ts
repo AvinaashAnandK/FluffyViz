@@ -809,6 +809,74 @@ export async function labelAllClusters(
 }
 
 /**
+ * Sample example texts from a cluster for display in cluster cards.
+ * Returns truncated composed_text snippets.
+ *
+ * @param layerId - The embedding layer ID
+ * @param clusterId - The cluster ID to sample from
+ * @param count - Number of examples to retrieve (default: 3)
+ * @param maxLength - Maximum length per example (default: 150)
+ * @returns Array of truncated text examples
+ */
+export async function sampleClusterExamples(
+  layerId: string,
+  clusterId: number,
+  count: number = 3,
+  maxLength: number = 150
+): Promise<string[]> {
+  const points = await executeQuery<{ composed_text: string }>(`
+    SELECT composed_text
+    FROM embedding_points
+    WHERE layer_id = '${layerId.replace(/'/g, "''")}'
+      AND cluster_id = ${clusterId}
+    ORDER BY RANDOM()
+    LIMIT ${count}
+  `);
+
+  return points.map(p => {
+    const text = (p.composed_text || '').trim();
+    if (text.length <= maxLength) {
+      return text;
+    }
+    return text.substring(0, maxLength).trim() + '...';
+  });
+}
+
+/**
+ * Get sample examples for all clusters in a layer.
+ * Useful for batch loading cluster cards.
+ *
+ * @param layerId - The embedding layer ID
+ * @param count - Number of examples per cluster (default: 3)
+ * @param maxLength - Maximum length per example (default: 150)
+ * @returns Map of clusterId -> example texts
+ */
+export async function sampleAllClusterExamples(
+  layerId: string,
+  count: number = 3,
+  maxLength: number = 150
+): Promise<Map<number, string[]>> {
+  // First get all cluster IDs
+  const clusterIds = await executeQuery<{ cluster_id: number }>(`
+    SELECT DISTINCT cluster_id
+    FROM embedding_points
+    WHERE layer_id = '${layerId.replace(/'/g, "''")}'
+      AND cluster_id != -1
+    ORDER BY cluster_id
+  `);
+
+  const result = new Map<number, string[]>();
+
+  // Sample from each cluster
+  for (const { cluster_id } of clusterIds) {
+    const examples = await sampleClusterExamples(layerId, cluster_id, count, maxLength);
+    result.set(cluster_id, examples);
+  }
+
+  return result;
+}
+
+/**
  * Clear the label cache
  */
 export function clearLabelCache(): void {
@@ -836,6 +904,8 @@ if (typeof window !== 'undefined') {
     agglomerate: agglomerativeClustering,
     // Cluster labeling
     sampleCluster,
+    sampleClusterExamples,
+    sampleAllClusterExamples,
     labelCluster,
     labelAllClusters,
     clearLabelCache,

@@ -12,7 +12,7 @@ import { createMistral } from '@ai-sdk/mistral';
 import { get_encoding, type Tiktoken } from 'tiktoken';
 import type { GenerationProgress } from '@/types/embedding';
 
-const BATCH_SIZE = 100; // Process 100 texts per batch
+const BATCH_SIZE = 50; // Process 50 texts per batch (smaller batches are more reliable over QUIC/HTTP3)
 
 /**
  * Max token limits per embedding model
@@ -240,23 +240,48 @@ export async function batchEmbed(
         message: `Embedding batch ${batchIndex + 1}/${totalBatches}...`,
       });
 
-      // Generate embeddings for batch
-      try {
-        const { embeddings } = await embedMany({
-          model: embeddingModel,
-          values: batch,
-        });
+      // Generate embeddings for batch with retry logic for network errors
+      const maxRetries = 3;
+      let lastError: unknown;
 
-        allEmbeddings.push(...embeddings);
-      } catch (batchError) {
-        // Log detailed info about the failing batch
-        const charLengths = batch.map(t => t.length);
-        const maxLen = Math.max(...charLengths);
-        const maxIdx = charLengths.indexOf(maxLen);
-        console.error(`[Batch Embedder] Batch ${batchIndex + 1}/${totalBatches} failed!`);
-        console.error(`[Batch Embedder] Batch size: ${batch.length}, char lengths: min=${Math.min(...charLengths)}, max=${maxLen}`);
-        console.error(`[Batch Embedder] Longest text (idx ${startIdx + maxIdx}): ${batch[maxIdx]?.substring(0, 200)}...`);
-        throw batchError;
+      for (let attempt = 0; attempt < maxRetries; attempt++) {
+        try {
+          const { embeddings } = await embedMany({
+            model: embeddingModel,
+            values: batch,
+          });
+
+          allEmbeddings.push(...embeddings);
+          lastError = null;
+          break; // Success, exit retry loop
+        } catch (batchError) {
+          lastError = batchError;
+          const errorMessage = batchError instanceof Error ? batchError.message : String(batchError);
+          const isNetworkError = errorMessage.includes('Failed to fetch') ||
+                                 errorMessage.includes('network') ||
+                                 errorMessage.includes('QUIC') ||
+                                 errorMessage.includes('ERR_');
+
+          if (isNetworkError && attempt < maxRetries - 1) {
+            const delay = Math.pow(2, attempt) * 1000; // 1s, 2s, 4s
+            console.warn(`[Batch Embedder] Batch ${batchIndex + 1}/${totalBatches} network error, retrying in ${delay}ms (attempt ${attempt + 1}/${maxRetries})`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+            continue;
+          }
+
+          // Log detailed info about the failing batch
+          const charLengths = batch.map(t => t.length);
+          const maxLen = Math.max(...charLengths);
+          const maxIdx = charLengths.indexOf(maxLen);
+          console.error(`[Batch Embedder] Batch ${batchIndex + 1}/${totalBatches} failed!`);
+          console.error(`[Batch Embedder] Batch size: ${batch.length}, char lengths: min=${Math.min(...charLengths)}, max=${maxLen}`);
+          console.error(`[Batch Embedder] Longest text (idx ${startIdx + maxIdx}): ${batch[maxIdx]?.substring(0, 200)}...`);
+          throw batchError;
+        }
+      }
+
+      if (lastError) {
+        throw lastError;
       }
     }
 

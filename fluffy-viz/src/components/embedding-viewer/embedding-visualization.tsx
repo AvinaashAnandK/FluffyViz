@@ -19,7 +19,7 @@ import { createFluffySearcher, getSearchableColumns, type Searcher } from '@/lib
 import { hybridCluster, clusterEmbeddings } from '@/lib/embedding/clustering';
 import { loadClusteringCoordinates } from '@/lib/embedding/clustering-coords-storage';
 import '@/lib/embedding/cluster-similarity'; // Browser console tools
-import { Loader2, Circle, Waves, Minus, Plus, Tags, RefreshCw, CheckCircle, BarChart3, Settings } from 'lucide-react';
+import { Loader2, Circle, Waves, Minus, Plus, BarChart3, Tags } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Slider } from '@/components/ui/slider';
@@ -29,9 +29,9 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover';
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Switch } from '@/components/ui/switch';
+import { ClusterManagementDialog } from './ClusterManagementDialog';
 
 interface EmbeddingVisualizationProps {
   layer: ActiveEmbeddingLayer;
@@ -112,6 +112,7 @@ export function EmbeddingVisualization({
     layer.clusterStats ?? null
   );
   const [isReclustering, setIsReclustering] = useState(false);
+  const [clusterDialogOpen, setClusterDialogOpen] = useState(false);
 
   // Sync cluster config and stats when layer changes (view switch)
   useEffect(() => {
@@ -203,12 +204,25 @@ export function EmbeddingVisualization({
   }, [stateKey]);
 
   // Handle re-clustering with new parameters
-  const handleRecluster = useCallback(async () => {
+  // Can optionally accept params from the ClusterManagementDialog
+  const handleRecluster = useCallback(async (
+    params?: { nNeighbors: number; minClusterSize: number; minSamples: number }
+  ) => {
     if (!layer.points.length || isReclustering) return;
 
     setIsReclustering(true);
     try {
-      console.log('[Embedding Visualization] Re-clustering with config:', clusterConfig);
+      // Use provided params or fall back to local state
+      const config = params
+        ? { ...clusterConfig, ...params }
+        : clusterConfig;
+
+      // Update local state if params were provided
+      if (params) {
+        setClusterConfig(prev => ({ ...prev, ...params }));
+      }
+
+      console.log('[Embedding Visualization] Re-clustering with config:', config);
 
       const pointIds = layer.points.map(p => p.id);
 
@@ -222,12 +236,12 @@ export function EmbeddingVisualization({
       if (clusteringCoords && clusteringCoords.length === layer.points.length) {
         // Use hybrid approach: HDBSCAN on 15D for k-discovery, K-Means on embeddings
         console.log('[Embedding Visualization] Using hybrid clustering (HDBSCAN → K-Means)');
-        result = await hybridCluster(clusteringCoords, originalEmbeddings, clusterConfig);
+        result = await hybridCluster(clusteringCoords, originalEmbeddings, config);
       } else {
         // Fall back to HDBSCAN-only on 2D coordinates if OPFS data not available
         console.log('[Embedding Visualization] Falling back to HDBSCAN on 2D coordinates');
         const coordinates2D = layer.points.map(p => p.coordinates2D);
-        result = await clusterEmbeddings(coordinates2D, clusterConfig);
+        result = await clusterEmbeddings(coordinates2D, config);
       }
 
       // Update cluster assignments in DuckDB
@@ -242,7 +256,7 @@ export function EmbeddingVisualization({
         noisePercentage: isHybrid ? 0 : (result as any).noisePercentage || 0,
         clusterSizes: Object.fromEntries(result.clusterSizes),
       };
-      await updateClusterMetadata(layer.id, clusterConfig, newStats);
+      await updateClusterMetadata(layer.id, config, newStats);
 
       // Update local state
       setClusterStats(newStats);
@@ -264,7 +278,7 @@ export function EmbeddingVisualization({
         }));
         onLayerUpdate({
           ...layer,
-          clusterConfig,
+          clusterConfig: config,
           clusterStats: newStats,
           points: updatedPoints,
         });
@@ -604,171 +618,21 @@ export function EmbeddingVisualization({
         {/* Separator */}
         <div className="h-4 w-px bg-border" />
 
-        {/* Clustering Controls */}
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button variant="outline" size="sm" className="h-7 text-xs gap-1">
-              <BarChart3 className="h-3 w-3" />
-              Clusters
-              {clusterStats && (
-                <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">
-                  {clusterStats.clusterCount}
-                </Badge>
-              )}
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent className="w-80" align="start">
-            <div className="space-y-4">
-              {/* Approach Description */}
-              <p className="text-xs text-muted-foreground">
-                HDBSCAN discovers k on 15D UMAP, K-Means assigns all points via silhouette-optimized k.
-              </p>
-
-              {/* Cluster Stats */}
-              {clusterStats ? (
-                <div className="space-y-2">
-                  <Label className="text-xs font-medium">Statistics</Label>
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div className="flex justify-between p-2 bg-muted rounded">
-                      <span className="text-muted-foreground">Clusters</span>
-                      <span className="font-medium">{clusterStats.clusterCount}</span>
-                    </div>
-                    <div className="flex justify-between p-2 bg-muted rounded">
-                      <span className="text-muted-foreground">Outliers</span>
-                      <span className="font-medium">{clusterStats.noisePercentage.toFixed(1)}%</span>
-                    </div>
-                  </div>
-                  {clusterStats.clusterCount > 0 && (
-                    <div className="text-xs text-muted-foreground">
-                      Sizes: {Object.entries(clusterStats.clusterSizes)
-                        .sort(([, a], [, b]) => (b as number) - (a as number))
-                        .slice(0, 5)
-                        .map(([id, size]) => `C${id}: ${size}`)
-                        .join(', ')}
-                      {Object.keys(clusterStats.clusterSizes).length > 5 && '...'}
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="text-xs text-muted-foreground p-2 bg-muted rounded text-center">
-                  No clustering data available
-                </div>
-              )}
-
-              {/* Advanced Settings Accordion */}
-              <Accordion type="single" collapsible className="w-full">
-                <AccordionItem value="advanced" className="border rounded-md px-3">
-                  <AccordionTrigger className="py-2 text-xs hover:no-underline">
-                    <span className="flex items-center gap-1.5 text-muted-foreground">
-                      <Settings className="h-3 w-3" />
-                      Advanced Settings
-                    </span>
-                  </AccordionTrigger>
-                  <AccordionContent className="pt-2 pb-3 space-y-4">
-                    {/* UMAP Neighbors Slider */}
-                    <div className="space-y-2">
-                      <div className="flex justify-between">
-                        <Label className="text-xs font-medium">UMAP Neighbors</Label>
-                        <span className="text-xs text-muted-foreground">{clusterConfig.nNeighbors}</span>
-                      </div>
-                      <Slider
-                        value={[clusterConfig.nNeighbors]}
-                        onValueChange={([val]) => setClusterConfig(prev => ({ ...prev, nNeighbors: val }))}
-                        min={15}
-                        max={100}
-                        step={5}
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        Higher = more global structure
-                      </p>
-                    </div>
-
-                    {/* Min Cluster Size Slider */}
-                    <div className="space-y-2">
-                      <div className="flex justify-between">
-                        <Label className="text-xs font-medium">Min Cluster Size</Label>
-                        <span className="text-xs text-muted-foreground">{clusterConfig.minClusterSize}</span>
-                      </div>
-                      <Slider
-                        value={[clusterConfig.minClusterSize]}
-                        onValueChange={([val]) => setClusterConfig(prev => ({ ...prev, minClusterSize: val }))}
-                        min={5}
-                        max={50}
-                        step={1}
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        Min points to form a cluster
-                      </p>
-                    </div>
-
-                    {/* Min Samples Slider */}
-                    <div className="space-y-2">
-                      <div className="flex justify-between">
-                        <Label className="text-xs font-medium">Min Samples</Label>
-                        <span className="text-xs text-muted-foreground">{clusterConfig.minSamples}</span>
-                      </div>
-                      <Slider
-                        value={[clusterConfig.minSamples]}
-                        onValueChange={([val]) => setClusterConfig(prev => ({ ...prev, minSamples: val }))}
-                        min={1}
-                        max={15}
-                        step={1}
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        Core point threshold for HDBSCAN
-                      </p>
-                    </div>
-                  </AccordionContent>
-                </AccordionItem>
-              </Accordion>
-
-              {/* Re-cluster Button */}
-              <Button
-                onClick={handleRecluster}
-                disabled={isReclustering || !layer.points.length}
-                className="w-full"
-                size="sm"
-              >
-                {isReclustering ? (
-                  <>
-                    <Loader2 className="h-3 w-3 mr-2 animate-spin" />
-                    Re-clustering...
-                  </>
-                ) : (
-                  <>
-                    <RefreshCw className="h-3 w-3 mr-2" />
-                    Re-cluster
-                  </>
-                )}
-              </Button>
-
-              {/* Future Features (disabled) */}
-              <div className="pt-2 border-t space-y-2">
-                <Label className="text-xs font-medium text-muted-foreground">Coming Soon</Label>
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="flex-1 text-xs"
-                    disabled
-                  >
-                    <Tags className="h-3 w-3 mr-1" />
-                    Name Clusters
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="flex-1 text-xs"
-                    disabled
-                  >
-                    <CheckCircle className="h-3 w-3 mr-1" />
-                    Eval Coherence
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </PopoverContent>
-        </Popover>
+        {/* Clustering Controls - Opens ClusterManagementDialog */}
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-7 text-xs gap-1"
+          onClick={() => setClusterDialogOpen(true)}
+        >
+          <BarChart3 className="h-3 w-3" />
+          Clusters
+          {clusterStats && (
+            <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">
+              {clusterStats.clusterCount}
+            </Badge>
+          )}
+        </Button>
       </div>
 
       {/* Visualization */}
@@ -785,6 +649,18 @@ export function EmbeddingVisualization({
           onExportSelection={handleExportSelection}
         />
       </div>
+
+      {/* Cluster Management Dialog */}
+      <ClusterManagementDialog
+        open={clusterDialogOpen}
+        onOpenChange={setClusterDialogOpen}
+        layer={layer}
+        fileId={fileId}
+        onLayerUpdate={onLayerUpdate}
+        onViewConfigUpdate={() => setViewConfigVersion(v => v + 1)}
+        onRecluster={handleRecluster}
+        isReclustering={isReclustering}
+      />
     </div>
   );
 }
